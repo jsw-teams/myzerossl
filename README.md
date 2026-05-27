@@ -348,7 +348,8 @@ Recommended settings:
 
 - Proxy status: proxied.
 - SSL/TLS mode: Full strict.
-- Monitor: `HC`, HTTPS `GET /healthz`, expected code `200`.
+- Monitor: `HC`, HTTPS `GET /healthz`, expected code `200`, request header
+  `Host: js.gripe`.
 - Health check path: `/healthz` on the backend you expose through `EDGE_BACKEND`.
 - Steering: Proximity when region-level steering is unavailable. Keep `US` as
   the fallback pool so APAC can prefer `HK` while other regions and HK failures
