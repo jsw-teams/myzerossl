@@ -43,6 +43,9 @@ Do not commit the session secret or client secret.
 
 The console can:
 
+- Review pending edge registration requests.
+- Approve a pending edge and generate its token.
+- Reject a pending edge registration.
 - View configured edge signer clients.
 - View revoked client ids.
 - View recent signer audit log lines.
@@ -54,8 +57,24 @@ Changes are written to:
 ```text
 /etc/myzerossl/clients.json
 /etc/myzerossl/revoked-clients.txt
+/etc/myzerossl/edge-registrations.json
 ```
 
 Restart `keylessd-local` after manually editing those files. Console actions
 take effect for the persisted files immediately; already loaded in-memory signer
 state may require a restart for some manual changes.
+
+## Edge Registration Flow
+
+A new edge VPS should not be added to `clients.json` automatically. It can only
+submit a pending request:
+
+```sh
+curl -X POST https://ssl-signer.js.gripe/api/register \
+  -H 'Content-Type: application/json' \
+  --data '{"id":"tw-edge-2","label":"Taiwan edge replacement"}'
+```
+
+The request remains pending until a `system_admin` signs in to
+`https://ssl-signer.js.gripe` and approves it. Approval generates a token once;
+copy it immediately into the edge VPS `KEYLESS_TOKEN`.

@@ -35,6 +35,7 @@ type app struct {
 	clientsPath  string
 	revokedPath  string
 	auditPath    string
+	registerPath string
 	mu           sync.Mutex
 }
 
@@ -47,6 +48,25 @@ type accountMe struct {
 	} `json:"user"`
 }
 
+type registrationFile struct {
+	Registrations []edgeRegistration `json:"registrations"`
+}
+
+type edgeRegistration struct {
+	ID          string `json:"id"`
+	Label       string `json:"label,omitempty"`
+	Status      string `json:"status"`
+	RemoteAddr  string `json:"remote_addr,omitempty"`
+	RequestedAt string `json:"requested_at"`
+	ApprovedAt  string `json:"approved_at,omitempty"`
+	RejectedAt  string `json:"rejected_at,omitempty"`
+}
+
+type registerRequest struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 func main() {
 	listen := flag.String("listen", "127.0.0.1:19444", "console listen address")
 	accountAPI := flag.String("account-api", "https://gateway.js.gripe/api/v1/myaccount", "account-system API base")
@@ -57,6 +77,7 @@ func main() {
 	clientsPath := flag.String("clients", "/etc/myzerossl/clients.json", "signer clients JSON path")
 	revokedPath := flag.String("revoked", "/etc/myzerossl/revoked-clients.txt", "revoked client ids path")
 	auditPath := flag.String("audit", "/var/log/myzerossl/signer-audit.jsonl", "audit JSONL path")
+	registerPath := flag.String("registrations", "/etc/myzerossl/edge-registrations.json", "pending edge registration path")
 	flag.Parse()
 
 	applyEnv("CONSOLE_LISTEN", listen)
@@ -68,6 +89,7 @@ func main() {
 	applyEnv("KEYLESS_CLIENTS", clientsPath)
 	applyEnv("KEYLESS_REVOKED", revokedPath)
 	applyEnv("KEYLESS_AUDIT", auditPath)
+	applyEnv("CONSOLE_REGISTRATIONS", registerPath)
 
 	if *clientID == "" {
 		log.Fatal("-client-id is required")
@@ -84,6 +106,7 @@ func main() {
 		clientsPath:  *clientsPath,
 		revokedPath:  *revokedPath,
 		auditPath:    *auditPath,
+		registerPath: *registerPath,
 	}
 
 	mux := http.NewServeMux()
@@ -91,8 +114,10 @@ func main() {
 	mux.HandleFunc("GET /login", a.login)
 	mux.HandleFunc("GET /auth/account/callback", a.callback)
 	mux.HandleFunc("POST /logout", a.logout)
+	mux.HandleFunc("POST /api/register", a.registerEdge)
 	mux.HandleFunc("GET /api/summary", a.requireAdmin(a.summary))
 	mux.HandleFunc("POST /api/clients/", a.requireAdmin(a.clientAction))
+	mux.HandleFunc("POST /api/registrations/", a.requireAdmin(a.registrationAction))
 
 	server := &http.Server{
 		Addr:              *listen,
@@ -190,11 +215,77 @@ func (a *app) summary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	registrations, err := readRegistrations(a.registerPath)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"clients": clients.Clients,
-		"revoked": revoked,
-		"audit":   audit,
+		"clients":       clients.Clients,
+		"revoked":       revoked,
+		"audit":         audit,
+		"registrations": registrations.Registrations,
 	})
+}
+
+func (a *app) registerEdge(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	req.Label = strings.TrimSpace(req.Label)
+	if !validClientID(req.ID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	clients, err := readClientFile(a.clientsPath)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	for _, client := range clients.Clients {
+		if client.ID == req.ID {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "client already exists"})
+			return
+		}
+	}
+	file, err := readRegistrations(a.registerPath)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i := range file.Registrations {
+		if file.Registrations[i].ID == req.ID && file.Registrations[i].Status == "pending" {
+			file.Registrations[i].Label = req.Label
+			file.Registrations[i].RemoteAddr = clientAddress(r)
+			file.Registrations[i].RequestedAt = now
+			if err := writeRegistrations(a.registerPath, file); err != nil {
+				writeError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "pending"})
+			return
+		}
+	}
+	file.Registrations = append(file.Registrations, edgeRegistration{
+		ID:          req.ID,
+		Label:       req.Label,
+		Status:      "pending",
+		RemoteAddr:  clientAddress(r),
+		RequestedAt: now,
+	})
+	if err := writeRegistrations(a.registerPath, file); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "pending"})
 }
 
 func (a *app) clientAction(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +341,80 @@ func (a *app) clientAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (a *app) registrationAction(w http.ResponseWriter, r *http.Request) {
+	id, action, ok := parseRegistrationAction(r.URL.Path)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	registrations, err := readRegistrations(a.registerPath)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	clients, err := readClientFile(a.clientsPath)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	index := -1
+	for i := range registrations.Registrations {
+		if registrations.Registrations[i].ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "registration not found"})
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	switch action {
+	case "approve":
+		for _, client := range clients.Clients {
+			if client.ID == id {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "client already exists"})
+				return
+			}
+		}
+		token := randomString(48)
+		clients.Clients = append(clients.Clients, keyless.ClientConfig{
+			ID:                         id,
+			Token:                      token,
+			RatePerMinute:              300,
+			AutoDisableSignsPerMinute:  1000,
+			AutoDisableErrorsPerMinute: 30,
+		})
+		registrations.Registrations[index].Status = "approved"
+		registrations.Registrations[index].ApprovedAt = now
+		if err := writeClientFile(a.clientsPath, clients); err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := writeRegistrations(a.registerPath, registrations); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "token": token})
+	case "reject":
+		registrations.Registrations[index].Status = "rejected"
+		registrations.Registrations[index].RejectedAt = now
+		if err := writeRegistrations(a.registerPath, registrations); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	default:
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	}
 }
 
 func (a *app) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
@@ -372,6 +537,30 @@ func readRevoked(path string) ([]string, error) {
 	return out, scanner.Err()
 }
 
+func readRegistrations(path string) (registrationFile, error) {
+	var file registrationFile
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return file, nil
+	}
+	if err != nil {
+		return file, err
+	}
+	return file, json.Unmarshal(data, &file)
+}
+
+func writeRegistrations(path string, file registrationFile) error {
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0640)
+}
+
 func appendRevoked(path string, id string) error {
 	current, err := readRevoked(path)
 	if err != nil {
@@ -430,6 +619,36 @@ func parseClientAction(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return parts[2], parts[3], true
+}
+
+func parseRegistrationAction(path string) (string, string, bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "api" || parts[1] != "registrations" {
+		return "", "", false
+	}
+	return parts[2], parts[3], true
+}
+
+func validClientID(id string) bool {
+	if len(id) < 3 || len(id) > 64 {
+		return false
+	}
+	for _, ch := range id {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func clientAddress(r *http.Request) string {
+	for _, header := range []string{"CF-Connecting-IP", "X-Real-IP"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			return value
+		}
+	}
+	return r.RemoteAddr
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -506,6 +725,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     <form method="post" action="/logout"><button>退出</button></form>
   </header>
   <main>
+    <section><h2>Pending Edge Registrations</h2><div id="registrations"></div></section>
     <section><h2>Edge Clients</h2><div id="clients"></div></section>
     <section><h2>Revoked Clients</h2><pre id="revoked"></pre></section>
     <section><h2>Signer Audit</h2><pre id="audit"></pre></section>
@@ -521,10 +741,24 @@ async function action(id, name) {
   await api("/api/clients/" + encodeURIComponent(id) + "/" + name, { method: "POST" });
   await load();
 }
+async function registrationAction(id, name) {
+  const data = await api("/api/registrations/" + encodeURIComponent(id) + "/" + name, { method: "POST" });
+  if (data.token) alert("请立即保存该 edge token：\n\n" + data.token);
+  await load();
+}
 function esc(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 async function load() {
   const data = await api("/api/summary");
   const revoked = new Set(data.revoked || []);
+  const pendingRows = (data.registrations || []).filter(r => r.status === "pending").map(r => {
+    const id = esc(r.id);
+    return "<tr><td><code>" + id + "</code></td><td>" + esc(r.label || "") + "</td><td>" +
+      esc(r.remote_addr || "") + "</td><td>" + esc(r.requested_at || "") + "</td><td class=\"actions\">" +
+      "<button onclick=\"registrationAction('" + id + "','approve')\">批准并生成 token</button>" +
+      "<button class=\"danger\" onclick=\"registrationAction('" + id + "','reject')\">拒绝</button>" +
+      "</td></tr>";
+  }).join("");
+  document.querySelector("#registrations").innerHTML = "<table><thead><tr><th>ID</th><th>Label</th><th>Remote</th><th>Requested</th><th></th></tr></thead><tbody>" + pendingRows + "</tbody></table>";
   const rows = (data.clients || []).map(c => {
     const id = esc(c.id);
     const next = c.disabled ? "enable" : "disable";
