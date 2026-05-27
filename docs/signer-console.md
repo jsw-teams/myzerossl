@@ -37,6 +37,15 @@ It also serves:
 - `/robots.txt`: disallows indexing of the private console and allows
   `/llms.txt`.
 
+Frontend behavior:
+
+- Browser-language aware copy for Simplified Chinese, Traditional Chinese, and
+  English.
+- Responsive pixel-style layout for desktop, tablet, and narrow mobile screens.
+- Tables use horizontal scrolling on small screens so long edge IDs, source
+  addresses, and action buttons do not break the layout.
+- Long labels and account identifiers wrap inside their containers.
+
 ## Account Client
 
 Create an account-system API client:

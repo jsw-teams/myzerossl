@@ -780,57 +780,75 @@ const head = `<meta charset="utf-8">
 <meta property="og:image" content="https://ssl-signer.js.gripe/og.png">
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
+.root{--ink:#12151a;--muted:#5c6572;--line:#1f2937;--paper:#fffdf7;--soft:#f2efe6;--mint:#b8f3d4;--blue:#b8d8ff;--red:#ff7b7b}
 :root{--ink:#12151a;--muted:#5c6572;--line:#1f2937;--paper:#fffdf7;--soft:#f2efe6;--mint:#b8f3d4;--blue:#b8d8ff;--red:#ff7b7b}
-*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#dbeafe 0,#f7f4ea 280px);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;image-rendering:pixelated}
-a{color:inherit}.wrap{max-width:1120px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 0}
-.brand{display:flex;align-items:center;gap:12px}.logo{width:54px;height:54px;border:3px solid var(--line);border-radius:8px;background:#fff;box-shadow:4px 4px 0 var(--line);object-fit:cover}
-.title{font-size:24px;font-weight:900;line-height:1}.muted{color:var(--muted)}.pixel{border:3px solid var(--line);box-shadow:5px 5px 0 var(--line);background:var(--paper);border-radius:6px}
-.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center;padding:26px;margin-top:14px}.hero h1{font-size:34px;line-height:1.08;margin:0 0 12px}
+*{box-sizing:border-box}html{overflow-x:hidden}body{margin:0;min-width:320px;background:linear-gradient(180deg,#dbeafe 0,#f7f4ea 280px);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;image-rendering:pixelated;overflow-x:hidden}
+a{color:inherit}.wrap{width:min(1120px,100%);margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 0}
+.brand{display:flex;align-items:center;gap:12px;min-width:0;text-decoration:none}.brand>div,.brand span{min-width:0}.logo{flex:0 0 auto;width:54px;height:54px;border:3px solid var(--line);border-radius:8px;background:#fff;box-shadow:4px 4px 0 var(--line);object-fit:cover}
+.title{font-size:24px;font-weight:900;line-height:1;overflow-wrap:anywhere}.muted{color:var(--muted);overflow-wrap:anywhere}.pixel{border:3px solid var(--line);box-shadow:5px 5px 0 var(--line);background:var(--paper);border-radius:6px}
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(180px,.9fr);gap:22px;align-items:center;padding:26px;margin-top:14px}.hero h1{font-size:34px;line-height:1.08;margin:0 0 12px;overflow-wrap:anywhere}
 .hero p{font-size:16px;line-height:1.7}.mascot{width:220px;max-width:100%;display:block;margin:auto;border:3px solid var(--line);border-radius:10px;background:#fff;box-shadow:5px 5px 0 var(--line)}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px}.card{padding:16px}.card h2,.card h3{margin:0 0 10px;font-size:18px}.card p{line-height:1.6}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:3px solid var(--line);background:var(--mint);box-shadow:3px 3px 0 var(--line);border-radius:6px;font-weight:900;text-decoration:none;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:18px}.card{padding:16px}.card h2,.card h3{margin:0 0 10px;font-size:18px}.card p{line-height:1.6}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:10px 14px;border:3px solid var(--line);background:var(--mint);box-shadow:3px 3px 0 var(--line);border-radius:6px;font-weight:900;text-decoration:none;cursor:pointer;white-space:normal;text-align:center}
 .btn.secondary{background:var(--blue)}.btn.danger{background:#ffe0e0;color:#8a1111}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-header.app{background:var(--paper);border-bottom:3px solid var(--line)}main.console{display:grid;gap:18px}.panel{padding:16px;overflow:auto}.panel h2{margin:0 0 12px;font-size:18px}
-table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:2px solid #e5dfcf;padding:10px;vertical-align:middle}code,pre{background:#ede8da;border:2px solid #d8cfba;border-radius:4px}pre{padding:12px;white-space:pre-wrap;max-height:360px;overflow:auto}
-.empty{padding:14px;background:#ede8da;border:2px dashed #b9ae99;border-radius:6px}.pill{display:inline-block;padding:4px 8px;border:2px solid var(--line);background:#fff;border-radius:999px}
-@media(max-width:760px){.hero{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.hero h1{font-size:28px}.toolbar{align-items:stretch}.btn{justify-content:center}.top{align-items:flex-start}}
+header.app{background:var(--paper);border-bottom:3px solid var(--line)}main.console{display:grid;gap:18px}.panel{padding:16px;overflow:hidden}.panel h2{margin:0 0 12px;font-size:18px}.table-scroll{overflow-x:auto;padding-bottom:4px}
+table{width:100%;min-width:760px;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:2px solid #e5dfcf;padding:10px;vertical-align:middle;overflow-wrap:anywhere}td.actions{min-width:260px}code,pre{background:#ede8da;border:2px solid #d8cfba;border-radius:4px}code{padding:1px 4px;white-space:normal;overflow-wrap:anywhere}pre{padding:12px;white-space:pre-wrap;max-height:360px;overflow:auto}
+.empty{padding:14px;background:#ede8da;border:2px dashed #b9ae99;border-radius:6px;overflow-wrap:anywhere}.pill{display:inline-block;padding:4px 8px;border:2px solid var(--line);background:#fff;border-radius:999px}.actions{display:flex;gap:8px;flex-wrap:wrap}
+@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}.hero{grid-template-columns:1fr}.mascot{width:180px}.hero h1{font-size:30px}}
+@media(max-width:620px){.wrap{padding:14px}.grid{grid-template-columns:1fr}.hero{padding:18px}.hero h1{font-size:26px}.top{align-items:stretch;flex-direction:column}.toolbar{align-items:stretch;flex-direction:column}.btn{width:100%}.logo{width:48px;height:48px}.title{font-size:20px}.panel{padding:12px}.pixel{box-shadow:3px 3px 0 var(--line)}}
 </style>`
 
+const i18nScript = `<script>
+const dict={
+  "zh-CN":{
+    lang:"zh-CN",login:"管理员登录",subtitle:"Keyless 边缘控制",heroTitle:"让低信任边缘 VPS 不再持有证书私钥。",heroCopy:"SSL Signer Console 用 account-system 验证系统管理员，审批 edge 注册、吊销 signer client，并查看 keyless TLS 签名审计日志。",enterLogin:"进入登录页",noKey:"无私钥驻留",noKeyCopy:"边缘节点只保存证书链，TLS 握手签名由可信 signer 完成。",approval:"人工审批",approvalCopy:"新 edge 设备只能提交 pending 申请，管理员批准后才生成 token。",auto:"自动处置",autoCopy:"异常签名频率和错误阈值会触发自动吊销，降低滥用窗口。",loginTitle:"系统管理员登录",loginCopy:"登录将跳转到 account.js.gripe。只有 account-system 的 system_admin 可以访问控制台。",loginButton:"使用 account-system 登录",logout:"退出",pending:"待审批 Edge 注册",clients:"Edge 客户端",revoked:"已吊销客户端",audit:"Signer 审计",id:"ID",label:"标签",remote:"来源",requested:"申请时间",status:"状态",rate:"频率",autoDisable:"自动停用",approve:"批准并生成 token",reject:"拒绝",disable:"撤销注册权限",enable:"允许注册/启用",revoke:"吊销",unrevoke:"允许再次注册",noPending:"暂无待审批 edge 注册申请",noClients:"暂无已批准 edge client",none:"无",noAudit:"暂无审计记录",saveToken:"请立即保存该 edge token："},
+  "zh-TW":{
+    lang:"zh-TW",login:"管理員登入",subtitle:"Keyless 邊緣控制",heroTitle:"讓低信任邊緣 VPS 不再持有憑證私鑰。",heroCopy:"SSL Signer Console 使用 account-system 驗證系統管理員，審核 edge 註冊、撤銷 signer client，並查看 keyless TLS 簽章稽核記錄。",enterLogin:"進入登入頁",noKey:"無私鑰駐留",noKeyCopy:"邊緣節點只保存憑證鏈，TLS 握手簽章由可信 signer 完成。",approval:"人工審核",approvalCopy:"新 edge 裝置只能提交 pending 申請，管理員核准後才會產生 token。",auto:"自動處置",autoCopy:"異常簽章頻率與錯誤閾值會觸發自動吊銷，降低濫用窗口。",loginTitle:"系統管理員登入",loginCopy:"登入將跳轉到 account.js.gripe。只有 account-system 的 system_admin 可以存取控制台。",loginButton:"使用 account-system 登入",logout:"登出",pending:"待審核 Edge 註冊",clients:"Edge 用戶端",revoked:"已吊銷用戶端",audit:"Signer 稽核",id:"ID",label:"標籤",remote:"來源",requested:"申請時間",status:"狀態",rate:"頻率",autoDisable:"自動停用",approve:"核准並產生 token",reject:"拒絕",disable:"撤銷註冊權限",enable:"允許註冊/啟用",revoke:"吊銷",unrevoke:"允許再次註冊",noPending:"暫無待審核 edge 註冊申請",noClients:"暫無已核准 edge client",none:"無",noAudit:"暫無稽核記錄",saveToken:"請立即保存此 edge token："},
+  "en":{
+    lang:"en",login:"Admin Login",subtitle:"Keyless edge control",heroTitle:"Keep certificate private keys off low-trust edge VPS nodes.",heroCopy:"SSL Signer Console uses account-system to verify system administrators, approve edge registrations, revoke signer clients, and review keyless TLS signing audit logs.",enterLogin:"Open Login",noKey:"No key residency",noKeyCopy:"Edge nodes keep only certificate chains; trusted signers produce TLS handshake signatures.",approval:"Manual approval",approvalCopy:"New edge devices can only submit pending requests. Tokens are generated after admin approval.",auto:"Automatic response",autoCopy:"Abnormal signing volume and error thresholds trigger automatic revocation to limit abuse.",loginTitle:"System Admin Login",loginCopy:"Login redirects to account.js.gripe. Only account-system system_admin users can access the console.",loginButton:"Login with account-system",logout:"Sign Out",pending:"Pending Edge Registrations",clients:"Edge Clients",revoked:"Revoked Clients",audit:"Signer Audit",id:"ID",label:"Label",remote:"Remote",requested:"Requested",status:"Status",rate:"Rate",autoDisable:"Auto disable",approve:"Approve and generate token",reject:"Reject",disable:"Disable registration",enable:"Allow registration",revoke:"Revoke",unrevoke:"Allow again",noPending:"No pending edge registrations",noClients:"No approved edge clients",none:"none",noAudit:"No audit entries",saveToken:"Save this edge token now:"}
+};
+const locale = (navigator.language || "en").toLowerCase();
+const t = locale.startsWith("zh-tw") || locale.startsWith("zh-hk") || locale.startsWith("zh-mo") ? dict["zh-TW"] : (locale.startsWith("zh") ? dict["zh-CN"] : dict.en);
+document.documentElement.lang=t.lang;
+function applyText(){document.querySelectorAll("[data-i18n]").forEach(el=>{el.textContent=t[el.dataset.i18n]||el.dataset.i18n});document.querySelectorAll("[data-i18n-title]").forEach(el=>{el.title=t[el.dataset.i18nTitle]||el.dataset.i18nTitle})}
+document.addEventListener("DOMContentLoaded",applyText);
+</script>`
+
 var landingPage = template.Must(template.New("landing").Parse(`<!doctype html>
-<html lang="zh-CN">
-<head>
-  <title>SSL Signer Console - Keyless SSL Edge Control</title>` + head + `
-</head>
-<body>
-  <main class="wrap">
-    <nav class="top"><div class="brand"><img class="logo" src="/favicon.png" alt=""><div><div class="title">SSL Signer</div><div class="muted">Keyless edge control</div></div></div><a class="btn" href="/login">管理员登录</a></nav>
-    <section class="hero pixel">
-      <div><h1>让低信任边缘 VPS 不再持有证书私钥。</h1><p>SSL Signer Console 用 account-system 验证系统管理员，审批 edge 注册、吊销 signer client，并查看 keyless TLS 签名审计日志。</p><div class="toolbar"><a class="btn" href="/login">进入登录页</a><a class="btn secondary" href="/llms.txt">llms.txt</a></div></div>
-      <img class="mascot" src="/favicon.png" alt="黑熊拿着扳手的像素风图标">
-    </section>
-    <section class="grid">
-      <article class="card pixel"><h2>无私钥驻留</h2><p>边缘节点只保存证书链，TLS 握手签名由可信 signer 完成。</p></article>
-      <article class="card pixel"><h2>人工审批</h2><p>新 edge 设备只能提交 pending 申请，管理员批准后才生成 token。</p></article>
-      <article class="card pixel"><h2>自动处置</h2><p>异常签名频率和错误阈值会触发自动吊销，降低滥用窗口。</p></article>
-    </section>
-  </main>
-</body></html>`))
+	<html lang="zh-CN">
+	<head>
+	  <title>SSL Signer Console - Keyless SSL Edge Control</title>` + head + `
+	</head>
+	<body>
+	  <main class="wrap">
+	    <nav class="top"><div class="brand"><img class="logo" src="/favicon.png" alt=""><div><div class="title">SSL Signer</div><div class="muted" data-i18n="subtitle">Keyless edge control</div></div></div><a class="btn" href="/login" data-i18n="login">管理员登录</a></nav>
+	    <section class="hero pixel">
+	      <div><h1 data-i18n="heroTitle">让低信任边缘 VPS 不再持有证书私钥。</h1><p data-i18n="heroCopy">SSL Signer Console 用 account-system 验证系统管理员，审批 edge 注册、吊销 signer client，并查看 keyless TLS 签名审计日志。</p><div class="toolbar"><a class="btn" href="/login" data-i18n="enterLogin">进入登录页</a><a class="btn secondary" href="/llms.txt">llms.txt</a></div></div>
+	      <img class="mascot" src="/favicon.png" alt="黑熊拿着扳手的像素风图标">
+	    </section>
+	    <section class="grid">
+	      <article class="card pixel"><h2 data-i18n="noKey">无私钥驻留</h2><p data-i18n="noKeyCopy">边缘节点只保存证书链，TLS 握手签名由可信 signer 完成。</p></article>
+	      <article class="card pixel"><h2 data-i18n="approval">人工审批</h2><p data-i18n="approvalCopy">新 edge 设备只能提交 pending 申请，管理员批准后才生成 token。</p></article>
+	      <article class="card pixel"><h2 data-i18n="auto">自动处置</h2><p data-i18n="autoCopy">异常签名频率和错误阈值会触发自动吊销，降低滥用窗口。</p></article>
+	    </section>
+	  </main>` + i18nScript + `
+	</body></html>`))
 
 var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="zh-CN"><head><title>登录 - SSL Signer Console</title>` + head + `</head>
-<body><main class="wrap"><nav class="top"><a class="brand" href="/"><img class="logo" src="/favicon.png" alt=""><span class="title">SSL Signer</span></a></nav>
-<section class="hero pixel"><div><h1>系统管理员登录</h1><p>登录将跳转到 account.js.gripe。只有 account-system 的 system_admin 可以访问控制台。</p><a class="btn" href="/auth/start">使用 account-system 登录</a></div><img class="mascot" src="/favicon.png" alt=""></section>
-</main></body></html>`))
+	<body><main class="wrap"><nav class="top"><a class="brand" href="/"><img class="logo" src="/favicon.png" alt=""><span class="title">SSL Signer</span></a></nav>
+	<section class="hero pixel"><div><h1 data-i18n="loginTitle">系统管理员登录</h1><p data-i18n="loginCopy">登录将跳转到 account.js.gripe。只有 account-system 的 system_admin 可以访问控制台。</p><a class="btn" href="/auth/start" data-i18n="loginButton">使用 account-system 登录</a></div><img class="mascot" src="/favicon.png" alt=""></section>
+	</main>` + i18nScript + `</body></html>`))
 
 var consolePage = template.Must(template.New("console").Parse(`<!doctype html>
 <html lang="zh-CN"><head><title>控制台 - SSL Signer Console</title>` + head + `</head>
 <body>
-  <header class="app"><div class="wrap top"><div class="brand"><img class="logo" src="/favicon.png" alt=""><div><div class="title">SSL Signer Console</div><div class="muted">{{.Email}}</div></div></div><form method="post" action="/logout"><button class="btn secondary">退出</button></form></div></header>
+  <header class="app"><div class="wrap top"><div class="brand"><img class="logo" src="/favicon.png" alt=""><div><div class="title">SSL Signer Console</div><div class="muted">{{.Email}}</div></div></div><form method="post" action="/logout"><button class="btn secondary" data-i18n="logout">退出</button></form></div></header>
   <main class="wrap console">
-    <section class="panel pixel"><h2>Pending Edge Registrations</h2><div id="registrations"></div></section>
-    <section class="panel pixel"><h2>Edge Clients</h2><div id="clients"></div></section>
-    <section class="panel pixel"><h2>Revoked Clients</h2><pre id="revoked"></pre></section>
-    <section class="panel pixel"><h2>Signer Audit</h2><pre id="audit"></pre></section>
+    <section class="panel pixel"><h2 data-i18n="pending">Pending Edge Registrations</h2><div id="registrations"></div></section>
+    <section class="panel pixel"><h2 data-i18n="clients">Edge Clients</h2><div id="clients"></div></section>
+    <section class="panel pixel"><h2 data-i18n="revoked">Revoked Clients</h2><pre id="revoked"></pre></section>
+    <section class="panel pixel"><h2 data-i18n="audit">Signer Audit</h2><pre id="audit"></pre></section>
   </main>
 <script>
 async function api(path, options = {}) {
@@ -845,7 +863,7 @@ async function action(id, name) {
 }
 async function registrationAction(id, name) {
   const data = await api("/api/registrations/" + encodeURIComponent(id) + "/" + name, { method: "POST" });
-  if (data.token) alert("请立即保存该 edge token：\n\n" + data.token);
+  if (data.token) alert(t.saveToken + "\n\n" + data.token);
   await load();
 }
 function esc(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
@@ -856,11 +874,11 @@ async function load() {
     const id = esc(r.id);
     return "<tr><td><code>" + id + "</code></td><td>" + esc(r.label || "") + "</td><td>" +
       esc(r.remote_addr || "") + "</td><td>" + esc(r.requested_at || "") + "</td><td class=\"actions\">" +
-      "<button onclick=\"registrationAction('" + id + "','approve')\">批准并生成 token</button>" +
-      "<button class=\"danger\" onclick=\"registrationAction('" + id + "','reject')\">拒绝</button>" +
+      "<button class=\"btn\" onclick=\"registrationAction('" + id + "','approve')\">" + t.approve + "</button>" +
+      "<button class=\"btn danger\" onclick=\"registrationAction('" + id + "','reject')\">" + t.reject + "</button>" +
       "</td></tr>";
   }).join("");
-  document.querySelector("#registrations").innerHTML = pendingRows ? "<table><thead><tr><th>ID</th><th>Label</th><th>Remote</th><th>Requested</th><th></th></tr></thead><tbody>" + pendingRows + "</tbody></table>" : "<div class=\"empty\">暂无待审批 edge 注册申请</div>";
+  document.querySelector("#registrations").innerHTML = pendingRows ? "<div class=\"table-scroll\"><table><thead><tr><th>" + t.id + "</th><th>" + t.label + "</th><th>" + t.remote + "</th><th>" + t.requested + "</th><th></th></tr></thead><tbody>" + pendingRows + "</tbody></table></div>" : "<div class=\"empty\">" + t.noPending + "</div>";
   const rows = (data.clients || []).map(c => {
     const id = esc(c.id);
     const next = c.disabled ? "enable" : "disable";
@@ -870,16 +888,16 @@ async function load() {
       (c.rate_per_minute || "-") + "/min</td><td>" +
       (c.auto_disable_signs_per_minute || "-") + " signs, " +
       (c.auto_disable_errors_per_minute || "-") + " errors</td><td class=\"actions\">" +
-      "<button onclick=\"action('" + id + "','" + next + "')\">" + label + "</button>" +
-      "<button class=\"danger\" onclick=\"action('" + id + "','revoke')\">吊销</button>" +
-      "<button onclick=\"action('" + id + "','unrevoke')\">允许再次注册</button>" +
+      "<button class=\"btn secondary\" onclick=\"action('" + id + "','" + next + "')\">" + (c.disabled ? t.enable : t.disable) + "</button>" +
+      "<button class=\"btn danger\" onclick=\"action('" + id + "','revoke')\">" + t.revoke + "</button>" +
+      "<button class=\"btn\" onclick=\"action('" + id + "','unrevoke')\">" + t.unrevoke + "</button>" +
       "</td></tr>";
   }).join("");
-  document.querySelector("#clients").innerHTML = rows ? "<table><thead><tr><th>ID</th><th>Status</th><th>Rate</th><th>Auto disable</th><th></th></tr></thead><tbody>" + rows + "</tbody></table>" : "<div class=\"empty\">暂无已批准 edge client</div>";
-  document.querySelector("#revoked").textContent = (data.revoked || []).join("\n") || "none";
-  document.querySelector("#audit").textContent = (data.audit || []).join("\n") || "no audit entries";
+  document.querySelector("#clients").innerHTML = rows ? "<div class=\"table-scroll\"><table><thead><tr><th>" + t.id + "</th><th>" + t.status + "</th><th>" + t.rate + "</th><th>" + t.autoDisable + "</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>" : "<div class=\"empty\">" + t.noClients + "</div>";
+  document.querySelector("#revoked").textContent = (data.revoked || []).join("\n") || t.none;
+  document.querySelector("#audit").textContent = (data.audit || []).join("\n") || t.noAudit;
 }
-load().catch(err => alert(err.message));
-</script>
+document.addEventListener("DOMContentLoaded",()=>{applyText();load().catch(err => alert(err.message));});
+</script>` + i18nScript + `
 </body>
 </html>`))

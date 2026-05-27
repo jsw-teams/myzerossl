@@ -68,6 +68,9 @@ The console includes:
 - account-system login page.
 - system_admin-only dashboard.
 - Pixel-art black bear wrench icon.
+- Browser-language aware Simplified Chinese, Traditional Chinese, and English
+  copy.
+- Responsive layouts for desktop, tablet, and mobile viewports.
 - SEO description and Open Graph metadata.
 - `/llms.txt` for LLM-friendly service context.
 
