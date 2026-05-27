@@ -71,12 +71,16 @@ The console includes:
 - Browser-language aware Simplified Chinese, Traditional Chinese, and English
   copy.
 - Responsive layouts for desktop, tablet, and mobile viewports.
+- A single-background pixel UI with a sticky footer and one-time edge token
+  dialog.
 - SEO description and Open Graph metadata.
 - `/llms.txt` for LLM-friendly service context.
 
 New edge devices are not trusted automatically. They submit a pending
 registration request and appear in the console. A system administrator must
-approve the request before a token is generated. A fresh production
+approve the request before a token is generated. The generated token is shown
+once in the browser, should be copied into the matching edge VPS immediately,
+and is cleared from the page when the dialog closes. A fresh production
 `/etc/myzerossl/clients.json` should contain no active clients:
 
 ```json

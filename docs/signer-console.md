@@ -42,6 +42,10 @@ Frontend behavior:
 - Browser-language aware copy for Simplified Chinese, Traditional Chinese, and
   English.
 - Responsive pixel-style layout for desktop, tablet, and narrow mobile screens.
+- One-time edge token dialog with copy action. The token is removed from the DOM
+  when the dialog is closed.
+- Single background color and a sticky footer so large desktop viewports do not
+  leave the footer floating mid-page.
 - Tables use horizontal scrolling on small screens so long edge IDs, source
   addresses, and action buttons do not break the layout.
 - Long labels and account identifiers wrap inside their containers.
@@ -101,8 +105,10 @@ curl -X POST https://ssl-signer.js.gripe/api/register \
 ```
 
 The request remains pending until a `system_admin` signs in to
-`https://ssl-signer.js.gripe` and approves it. Approval generates a token once;
-copy it immediately into the edge VPS `KEYLESS_TOKEN`.
+`https://ssl-signer.js.gripe` and approves it. Approval generates a token once
+and shows it in a console dialog instead of a browser alert. Copy it immediately
+into the edge VPS `KEYLESS_TOKEN`; closing the dialog clears the token from the
+page.
 
 Production signer hosts should start with:
 
