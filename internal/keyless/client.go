@@ -18,6 +18,7 @@ type RemoteSigner struct {
 	token     string
 	client    *http.Client
 	publicKey crypto.PublicKey
+	clientID  string
 }
 
 func NewRemoteSigner(ctx context.Context, baseURL string, token string, client *http.Client) (*RemoteSigner, error) {
@@ -44,6 +45,10 @@ func NewRemoteSigner(ctx context.Context, baseURL string, token string, client *
 	return signer, nil
 }
 
+func (s *RemoteSigner) SetClientID(clientID string) {
+	s.clientID = clientID
+}
+
 func (s *RemoteSigner) Public() crypto.PublicKey {
 	return s.publicKey
 }
@@ -62,6 +67,9 @@ func (s *RemoteSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) 
 	req.Header.Set("Content-Type", "application/json")
 	if s.token != "" {
 		req.Header.Set(HeaderToken, s.token)
+	}
+	if s.clientID != "" {
+		req.Header.Set(HeaderClientID, s.clientID)
 	}
 
 	resp, err := s.client.Do(req)
@@ -88,6 +96,9 @@ func (s *RemoteSigner) fetchPublicKey(ctx context.Context) (crypto.PublicKey, er
 	}
 	if s.token != "" {
 		req.Header.Set(HeaderToken, s.token)
+	}
+	if s.clientID != "" {
+		req.Header.Set(HeaderClientID, s.clientID)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

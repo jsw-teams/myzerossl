@@ -13,6 +13,7 @@ ExecStart=/usr/local/bin/edgeproxy \
   -backend ${EDGE_BACKEND} \
   -cert ${EDGE_CERT} \
   -keyless-url ${KEYLESS_URL} \
+  -keyless-client-id ${KEYLESS_CLIENT_ID} \
   -ca ${KEYLESS_CA} \
   -client-cert ${KEYLESS_CLIENT_CERT} \
   -client-key ${KEYLESS_CLIENT_KEY} \

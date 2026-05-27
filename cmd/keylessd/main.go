@@ -19,6 +19,9 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "server TLS private key for the keyless API")
 	clientCA := flag.String("client-ca", "", "CA file for mTLS client certificates")
 	token := flag.String("token", "", "shared auth token; prefer mTLS for production")
+	clients := flag.String("clients", "", "JSON file with per-edge client tokens and abuse thresholds")
+	revoked := flag.String("revoked", "", "file containing revoked client ids, one per line")
+	audit := flag.String("audit", "", "JSONL audit log path")
 	flag.Parse()
 
 	if *keyPath == "" {
@@ -31,9 +34,18 @@ func main() {
 
 	server := &http.Server{
 		Addr:              *listen,
-		Handler:           keyless.NewSignServer(key, *token).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	signServer, err := keyless.NewSignServerWithOptions(key, keyless.SignServerOptions{
+		Token:       *token,
+		ClientsPath: *clients,
+		RevokedPath: *revoked,
+		AuditPath:   *audit,
+	})
+	if err != nil {
+		log.Fatalf("load signer auth config: %v", err)
+	}
+	server.Handler = signServer.Routes()
 
 	if *tlsCert == "" || *tlsKey == "" {
 		log.Printf("warning: serving keyless API without TLS; use only on a private localhost link")

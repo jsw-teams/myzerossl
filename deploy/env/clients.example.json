@@ -1,0 +1,18 @@
+{
+  "clients": [
+    {
+      "id": "tw-edge",
+      "token": "replace-with-a-long-random-token-for-tw",
+      "rate_per_minute": 300,
+      "auto_disable_signs_per_minute": 1000,
+      "auto_disable_errors_per_minute": 30
+    },
+    {
+      "id": "hk-edge",
+      "token": "replace-with-a-long-random-token-for-hk",
+      "rate_per_minute": 300,
+      "auto_disable_signs_per_minute": 1000,
+      "auto_disable_errors_per_minute": 30
+    }
+  ]
+}

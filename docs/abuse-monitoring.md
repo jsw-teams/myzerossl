@@ -1,0 +1,115 @@
+# Abuse Monitoring And Auto Revocation
+
+The signer should not rely on one shared long-lived token for every edge VPS.
+Use one client identity per edge node, then let `keylessd` rate-limit and
+auto-disable only the node that behaves abnormally.
+
+## Signer Files
+
+Recommended local signer paths:
+
+```text
+/etc/myzerossl/clients.json
+/etc/myzerossl/revoked-clients.txt
+/var/log/myzerossl/signer-audit.jsonl
+```
+
+Create the directories before starting the local signer:
+
+```sh
+install -d -m 0750 /etc/myzerossl /var/log/myzerossl
+```
+
+`clients.json`:
+
+```json
+{
+  "clients": [
+    {
+      "id": "tw-edge",
+      "token": "replace-with-a-long-random-token-for-tw",
+      "rate_per_minute": 300,
+      "auto_disable_signs_per_minute": 1000,
+      "auto_disable_errors_per_minute": 30
+    },
+    {
+      "id": "hk-edge",
+      "token": "replace-with-a-long-random-token-for-hk",
+      "rate_per_minute": 300,
+      "auto_disable_signs_per_minute": 1000,
+      "auto_disable_errors_per_minute": 30
+    }
+  ]
+}
+```
+
+Field behavior:
+
+- `rate_per_minute`: soft limit. Further signing requests are rejected until
+  the next minute window.
+- `auto_disable_signs_per_minute`: hard abuse threshold. If exceeded, the
+  client id is appended to `revoked-clients.txt`.
+- `auto_disable_errors_per_minute`: hard error threshold. Repeated bad payloads
+  also revoke the client.
+- `disabled`: optional manual kill switch in `clients.json`.
+
+## Edge Files
+
+Each edge VPS receives only its own token:
+
+```sh
+KEYLESS_CLIENT_ID=tw-edge
+KEYLESS_TOKEN=replace-with-a-long-random-token-for-tw
+```
+
+The client id is for logs and operator clarity. The signer authorizes by token
+and maps the token to the configured client id.
+
+## Automatic Revocation
+
+When a threshold is exceeded, `keylessd` appends the client id to:
+
+```text
+/etc/myzerossl/revoked-clients.txt
+```
+
+The client is denied immediately in memory and remains denied after restart
+because the revoked file is loaded at startup.
+
+To manually revoke an edge:
+
+```sh
+printf '%s\n' tw-edge >> /etc/myzerossl/revoked-clients.txt
+systemctl restart keylessd-local
+```
+
+To restore an edge after investigation, remove its line from
+`revoked-clients.txt`, rotate its token in `clients.json`, update the edge VPS,
+and restart `keylessd-local`.
+
+## Audit Logs
+
+`keylessd` writes JSON lines:
+
+```json
+{"time":"2026-05-27T00:00:00Z","client_id":"tw-edge","remote_addr":"127.0.0.1:12345","action":"sign","result":"ok"}
+```
+
+Watch recent activity:
+
+```sh
+tail -f /var/log/myzerossl/signer-audit.jsonl
+```
+
+Find auto-disable events:
+
+```sh
+grep 'auto-disabled' /var/log/myzerossl/signer-audit.jsonl
+```
+
+## Cloudflare Layer
+
+If Cloudflare is trusted, keep `gateway.js.gripe/api/v1/ssl-signer` behind
+Cloudflare and add WAF/rate-limit rules for that path. The signer should still
+enforce its own per-client thresholds because an edge VPS compromise can leak
+that node's token.

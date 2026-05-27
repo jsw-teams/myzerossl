@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	HeaderToken = "X-Keyless-Token"
+	HeaderToken    = "X-Keyless-Token"
+	HeaderClientID = "X-Keyless-Client-ID"
 
 	SchemeDefault = "default"
 	SchemeRSAPSS  = "rsa-pss"

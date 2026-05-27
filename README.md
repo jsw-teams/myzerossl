@@ -30,6 +30,8 @@ firewall rules, private networking, and logs.
 - `cmd/edgeproxy`: HTTPS reverse proxy. Run this on untrusted edge VPS nodes.
 - `deploy/systemd`: Debian 12 systemd unit templates.
 - `scripts`: build and install helpers for Debian 12.
+- `docs/abuse-monitoring.md`: per-edge client tokens, audit logging, and
+  automatic revocation.
 
 ## Build Release Binaries
 
@@ -115,6 +117,10 @@ KEYLESS_TOKEN=replace-with-the-same-long-random-secret
 This repository also includes `deploy/systemd/keylessd-local.service` and
 `deploy/env/keylessd-local.env.example` for this localhost signer mode.
 
+For low-trust VPS nodes, do not use one shared token for every edge. Configure
+one signer client per VPS with automatic abuse thresholds. See
+`docs/abuse-monitoring.md`.
+
 ## Deploy The Taiwan Edge VPS
 
 On the Taiwan VPS:
@@ -153,6 +159,7 @@ EDGE_LISTEN=:443
 EDGE_BACKEND=http://127.0.0.1:8080
 EDGE_CERT=/etc/myzerossl/certs/example.com.fullchain.crt
 KEYLESS_URL=https://10.0.0.10:9443
+KEYLESS_CLIENT_ID=tw-edge
 KEYLESS_CA=/etc/myzerossl/keyless/ca.crt
 KEYLESS_CLIENT_CERT=/etc/myzerossl/keyless/edge-client.crt
 KEYLESS_CLIENT_KEY=/etc/myzerossl/keyless/edge-client.key

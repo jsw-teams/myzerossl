@@ -10,14 +10,18 @@ EnvironmentFile=/etc/myzerossl/keylessd-local.env
 ExecStart=/usr/local/bin/keylessd \
   -listen ${KEYLESS_LISTEN} \
   -key ${KEYLESS_PRIVATE_KEY} \
-  -token ${KEYLESS_TOKEN}
+  -token ${KEYLESS_TOKEN} \
+  -clients ${KEYLESS_CLIENTS} \
+  -revoked ${KEYLESS_REVOKED} \
+  -audit ${KEYLESS_AUDIT}
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadOnlyPaths=/etc/openresty/ssl /etc/myzerossl
+ReadOnlyPaths=/etc/openresty/ssl
+ReadWritePaths=/etc/myzerossl /var/log/myzerossl
 
 [Install]
 WantedBy=multi-user.target

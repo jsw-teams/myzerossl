@@ -23,6 +23,7 @@ func main() {
 	certPath := flag.String("cert", "", "public certificate chain PEM path")
 	keylessURL := flag.String("keyless-url", "", "keyless signer base URL")
 	token := flag.String("token", "", "shared auth token for keyless API")
+	keylessClientID := flag.String("keyless-client-id", "", "client id for signer audit logs")
 	caPath := flag.String("ca", "", "CA file for verifying keyless API server")
 	clientCert := flag.String("client-cert", "", "mTLS client certificate for keyless API")
 	clientKey := flag.String("client-key", "", "mTLS client key for keyless API")
@@ -45,6 +46,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect keyless signer: %v", err)
 	}
+	signer.SetClientID(*keylessClientID)
 
 	cert, err := loadCertificateChain(*certPath)
 	if err != nil {
