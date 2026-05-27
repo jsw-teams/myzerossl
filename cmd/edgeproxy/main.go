@@ -13,8 +13,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -26,12 +28,15 @@ import (
 	"time"
 
 	"memecdn/internal/keyless"
+
+	"golang.org/x/net/http2"
 )
 
 func main() {
 	listen := flag.String("listen", ":443", "public HTTPS listen address")
 	backendRaw := flag.String("backend", "http://127.0.0.1:8080", "upstream backend URL")
 	certPath := flag.String("cert", "", "public certificate chain PEM path")
+	certPaths := flag.String("certs", "", "comma-separated certificate chain entries, optionally key_id=path")
 	keylessURL := flag.String("keyless-url", "", "keyless signer base URL")
 	token := flag.String("token", "", "shared auth token for keyless API")
 	keylessClientID := flag.String("keyless-client-id", "", "client id for signer audit logs")
@@ -47,11 +52,13 @@ func main() {
 	cacheTTL := flag.String("cache-ttl", "10m", "static edge cache TTL, or 0 to disable")
 	cacheMaxBytes := flag.String("cache-max-bytes", "67108864", "maximum in-memory static cache bytes")
 	cacheMaxObjectBytes := flag.String("cache-max-object-bytes", "4194304", "maximum single cached object bytes")
+	pluginRoutesPath := flag.String("plugin-routes", "", "optional local plugin route JSON path")
 	flag.Parse()
 
 	applyEnv("EDGE_LISTEN", listen)
 	applyEnv("EDGE_BACKEND", backendRaw)
 	applyEnv("EDGE_CERT", certPath)
+	applyEnv("EDGE_CERTS", certPaths)
 	applyEnv("KEYLESS_URL", keylessURL)
 	applyEnv("KEYLESS_TOKEN", token)
 	applyEnv("KEYLESS_CLIENT_ID", keylessClientID)
@@ -67,6 +74,7 @@ func main() {
 	applyEnv("EDGE_CACHE_TTL", cacheTTL)
 	applyEnv("EDGE_CACHE_MAX_BYTES", cacheMaxBytes)
 	applyEnv("EDGE_CACHE_MAX_OBJECT_BYTES", cacheMaxObjectBytes)
+	applyEnv("EDGE_PLUGIN_ROUTES", pluginRoutesPath)
 
 	if *token == "" && *tokenFile != "" {
 		loadedToken, err := readTokenFile(*tokenFile)
@@ -92,42 +100,35 @@ func main() {
 		}
 	}
 	applyRemoteDefault("KEYLESS_URL", keylessURL, enrolledConfig)
-	if *certPath == "" || *keylessURL == "" {
-		log.Fatal("-cert and -keyless-url are required")
+	if (*certPath == "" && *certPaths == "") || *keylessURL == "" {
+		log.Fatal("-cert or -certs and -keyless-url are required")
 	}
 
 	transport, err := keylessTransport(*caPath, *clientCert, *clientKey)
 	if err != nil {
 		log.Fatal(err)
 	}
-	signer, err := keyless.NewRemoteSigner(
-		context.Background(),
-		*keylessURL,
-		*token,
-		&http.Client{Transport: transport, Timeout: 10 * time.Second},
-	)
-	if err != nil {
-		log.Fatalf("connect keyless signer: %v", err)
-	}
-	signer.SetClientID(*keylessClientID)
+	keylessClient := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	if enrolledInstallToken != "" {
 		if err := reportInstallVerified(context.Background(), *registerURL, enrolledInstallToken); err != nil {
 			log.Printf("warning: report edge install verification: %v", err)
 		}
 	}
 
-	cert, err := loadCertificateChain(*certPath)
+	certificates, err := loadKeylessCertificates(context.Background(), certificateSpecs(*certPath, *certPaths), *keylessURL, *token, *keylessClientID, keylessClient)
 	if err != nil {
-		log.Fatalf("parse certificate: %v", err)
+		log.Fatalf("load certificates: %v", err)
 	}
-	cert.PrivateKey = signer
-	cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
 
 	backend, err := url.Parse(*backendRaw)
 	if err != nil {
 		log.Fatalf("parse backend URL: %v", err)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend)
+	pluginRoutes, err := loadPluginRoutes(*pluginRoutesPath)
+	if err != nil {
+		log.Fatalf("load plugin routes: %v", err)
+	}
 	cache := newResponseCache(mustParseBytes(*cacheMaxBytes), mustParseBytes(*cacheMaxObjectBytes), mustParseDuration(*cacheTTL))
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		if cache.enabled() && isCacheableResponse(resp.Request, resp) {
@@ -148,6 +149,10 @@ func main() {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if route := pluginRoutes.match(r); route != nil {
+			route.proxy.ServeHTTP(w, r)
+			return
+		}
 		if cached, ok := cache.get(r); ok {
 			cached.write(w, r)
 			return
@@ -157,7 +162,7 @@ func main() {
 
 	tlsConfig := &tls.Config{
 		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cert},
+		Certificates: certificates,
 	}
 	listeners := splitListens(*listen)
 	errCh := make(chan error, len(listeners))
@@ -222,6 +227,64 @@ func loadCertificateChain(path string) (tls.Certificate, error) {
 	return cert, nil
 }
 
+type certificateSpec struct {
+	KeyID string
+	Path  string
+}
+
+func certificateSpecs(singlePath string, multiValue string) []certificateSpec {
+	var specs []certificateSpec
+	if strings.TrimSpace(multiValue) != "" {
+		for _, raw := range strings.Split(multiValue, ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			keyID, path, ok := strings.Cut(raw, "=")
+			if !ok {
+				keyID, path = "", keyID
+			}
+			specs = append(specs, certificateSpec{
+				KeyID: strings.TrimSpace(keyID),
+				Path:  strings.TrimSpace(path),
+			})
+		}
+		return specs
+	}
+	if strings.TrimSpace(singlePath) != "" {
+		specs = append(specs, certificateSpec{Path: strings.TrimSpace(singlePath)})
+	}
+	return specs
+}
+
+func loadKeylessCertificates(ctx context.Context, specs []certificateSpec, keylessURL string, token string, clientID string, client *http.Client) ([]tls.Certificate, error) {
+	if len(specs) == 0 {
+		return nil, errors.New("no certificate paths configured")
+	}
+	certificates := make([]tls.Certificate, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Path == "" {
+			return nil, errors.New("empty certificate path")
+		}
+		signer, err := keyless.NewRemoteSignerForKey(ctx, keylessURL, token, spec.KeyID, client)
+		if err != nil {
+			if spec.KeyID != "" {
+				return nil, fmt.Errorf("connect keyless signer for key %q: %w", spec.KeyID, err)
+			}
+			return nil, fmt.Errorf("connect keyless signer: %w", err)
+		}
+		signer.SetClientID(clientID)
+		cert, err := loadCertificateChain(spec.Path)
+		if err != nil {
+			return nil, fmt.Errorf("parse certificate %s: %w", spec.Path, err)
+		}
+		cert.PrivateKey = signer
+		cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
+		certificates = append(certificates, cert)
+	}
+	return certificates, nil
+}
+
 type caPEMError struct{}
 
 func (caPEMError) Error() string { return "CA file has no PEM certificates" }
@@ -255,6 +318,169 @@ func splitListens(value string) []string {
 		return []string{":443"}
 	}
 	return listens
+}
+
+type pluginRouteConfig struct {
+	Routes []pluginRouteSpec `json:"routes"`
+}
+
+type pluginRouteSpec struct {
+	Name         string   `json:"name"`
+	Hosts        []string `json:"hosts,omitempty"`
+	ExactPaths   []string `json:"exact_paths,omitempty"`
+	PathPrefixes []string `json:"path_prefixes,omitempty"`
+	Backend      string   `json:"backend"`
+	Protocol     string   `json:"protocol,omitempty"`
+}
+
+type pluginRoutes []*pluginRoute
+
+type pluginRoute struct {
+	name         string
+	hosts        map[string]struct{}
+	exactPaths   map[string]struct{}
+	pathPrefixes []string
+	proxy        *httputil.ReverseProxy
+}
+
+func loadPluginRoutes(path string) (pluginRoutes, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var config pluginRouteConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	routes := make(pluginRoutes, 0, len(config.Routes))
+	for _, spec := range config.Routes {
+		route, err := newPluginRoute(spec)
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
+	}
+	if len(routes) > 0 {
+		log.Printf("loaded %d plugin route(s) from %s", len(routes), path)
+	}
+	return routes, nil
+}
+
+func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
+	if spec.Backend == "" {
+		return nil, errors.New("plugin route backend is required")
+	}
+	backend, err := url.Parse(spec.Backend)
+	if err != nil {
+		return nil, err
+	}
+	if backend.Scheme == "" || backend.Host == "" {
+		return nil, errors.New("plugin route backend must include scheme and host")
+	}
+	protocol := strings.ToLower(strings.TrimSpace(spec.Protocol))
+	if protocol == "" {
+		protocol = "http"
+	}
+	proxyBackend := *backend
+	if protocol == "h2c" {
+		proxyBackend.Scheme = "http"
+	}
+	proxy := httputil.NewSingleHostReverseProxy(&proxyBackend)
+	switch protocol {
+	case "http", "http1", "ws", "websocket":
+	case "h2c", "grpc-h2c":
+		proxy.Transport = h2cTransport()
+	default:
+		return nil, errors.New("unsupported plugin route protocol: " + spec.Protocol)
+	}
+	route := &pluginRoute{
+		name:         spec.Name,
+		hosts:        makeHostSet(spec.Hosts),
+		exactPaths:   makePathSet(spec.ExactPaths),
+		pathPrefixes: cleanPathList(spec.PathPrefixes),
+		proxy:        proxy,
+	}
+	if len(route.exactPaths) == 0 && len(route.pathPrefixes) == 0 {
+		return nil, errors.New("plugin route requires exact_paths or path_prefixes")
+	}
+	return route, nil
+}
+
+func (routes pluginRoutes) match(r *http.Request) *pluginRoute {
+	for _, route := range routes {
+		if route.matches(r) {
+			return route
+		}
+	}
+	return nil
+}
+
+func (r *pluginRoute) matches(req *http.Request) bool {
+	if len(r.hosts) > 0 {
+		host := strings.ToLower(req.Host)
+		if h, _, ok := strings.Cut(host, ":"); ok {
+			host = h
+		}
+		if _, ok := r.hosts[host]; !ok {
+			return false
+		}
+	}
+	path := req.URL.Path
+	if _, ok := r.exactPaths[path]; ok {
+		return true
+	}
+	for _, prefix := range r.pathPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func h2cTransport() *http2.Transport {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, addr)
+		},
+	}
+}
+
+func makeHostSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			out[value] = struct{}{}
+		}
+	}
+	return out
+}
+
+func makePathSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range cleanPathList(values) {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+func cleanPathList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 type registerRequest struct {

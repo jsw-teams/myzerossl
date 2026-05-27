@@ -23,13 +23,15 @@ type ClientFile struct {
 }
 
 type ClientConfig struct {
-	ID                         string `json:"id"`
-	Token                      string `json:"token"`
-	Disabled                   bool   `json:"disabled,omitempty"`
-	RatePerMinute              int    `json:"rate_per_minute,omitempty"`
-	AutoDisableSignsPerMinute  int    `json:"auto_disable_signs_per_minute,omitempty"`
-	AutoDisableErrorsPerMinute int    `json:"auto_disable_errors_per_minute,omitempty"`
-	AutoRevoke                 bool   `json:"auto_revoke,omitempty"`
+	ID                         string            `json:"id"`
+	Token                      string            `json:"token"`
+	PrivateKey                 string            `json:"private_key,omitempty"`
+	PrivateKeys                map[string]string `json:"private_keys,omitempty"`
+	Disabled                   bool              `json:"disabled,omitempty"`
+	RatePerMinute              int               `json:"rate_per_minute,omitempty"`
+	AutoDisableSignsPerMinute  int               `json:"auto_disable_signs_per_minute,omitempty"`
+	AutoDisableErrorsPerMinute int               `json:"auto_disable_errors_per_minute,omitempty"`
+	AutoRevoke                 bool              `json:"auto_revoke,omitempty"`
 }
 
 type clientState struct {

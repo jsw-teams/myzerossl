@@ -93,6 +93,12 @@ Restart `keylessd-local` after manually editing those files. Console actions
 take effect for the persisted files immediately; already loaded in-memory signer
 state may require a restart for some manual changes.
 
+Each entry in `clients.json` may include an optional `private_key` path or a
+`private_keys` object. `private_key` changes the default key for that client
+token. `private_keys` maps key ids to private-key paths, allowing one edge token
+to use multiple certificate chains through the same signer endpoint. Edge nodes
+still receive only public certificate chains.
+
 ## Edge Registration Flow
 
 A new edge VPS should not be added to `clients.json` automatically. In the

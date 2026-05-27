@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +91,31 @@ func TestShouldGzipDynamicJSON(t *testing.T) {
 	resp.Header.Set("Content-Encoding", "br")
 	if shouldGzip(req, resp) {
 		t.Fatal("already encoded response should not be gzip-compressed")
+	}
+}
+
+func TestPluginRouteMatchesHostAndPath(t *testing.T) {
+	route := &pluginRoute{
+		hosts:        makeHostSet([]string{"plugin.example.test"}),
+		exactPaths:   makePathSet([]string{"/plugin/ws"}),
+		pathPrefixes: cleanPathList([]string{"/plugin/api/", "/plugin/grpc/"}),
+		proxy:        &httputil.ReverseProxy{},
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://plugin.example.test/plugin/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !route.matches(req) {
+		t.Fatal("expected exact path to match configured host")
+	}
+
+	req.URL.Path = "/plugin/grpc/service"
+	if !route.matches(req) {
+		t.Fatal("expected prefix path to match configured host")
+	}
+
+	req.Host = "other.example.test"
+	if route.matches(req) {
+		t.Fatal("route must not match a different host")
 	}
 }

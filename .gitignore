@@ -13,6 +13,8 @@
 *.pfx
 *.env
 config.local.*
+/plugins/
+/local-plugins/
 
 # OS/editor noise
 .DS_Store

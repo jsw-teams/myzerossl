@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 )
 
 type SignServer struct {
-	key  crypto.Signer
-	auth *authManager
+	key        crypto.Signer
+	clientKeys map[string]map[string]crypto.Signer
+	auth       *authManager
 }
 
 func NewSignServer(key crypto.Signer, token string) *SignServer {
@@ -27,7 +29,11 @@ func NewSignServerWithOptions(key crypto.Signer, opts SignServerOptions) (*SignS
 	if err != nil {
 		return nil, err
 	}
-	return &SignServer{key: key, auth: auth}, nil
+	clientKeys, err := loadClientKeys(auth)
+	if err != nil {
+		return nil, err
+	}
+	return &SignServer{key: key, clientKeys: clientKeys, auth: auth}, nil
 }
 
 func (s *SignServer) Routes() http.Handler {
@@ -50,8 +56,13 @@ func (s *SignServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *SignServer) publicKey(w http.ResponseWriter, _ *http.Request) {
-	encoded, err := EncodePublicKey(s.key.Public())
+func (s *SignServer) publicKey(w http.ResponseWriter, r *http.Request) {
+	key, ok := s.keyForRequest(r)
+	if !ok {
+		WriteJSON(w, http.StatusForbidden, map[string]string{"error": "key not allowed"})
+		return
+	}
+	encoded, err := EncodePublicKey(key.Public())
 	if err != nil {
 		WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -90,7 +101,13 @@ func (s *SignServer) sign(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	signature, err := s.key.Sign(rand.Reader, payload, opts)
+	key, ok := s.keyForRequest(r)
+	if !ok {
+		s.auth.record(clientID, "sign", false, "key not allowed", r.RemoteAddr)
+		WriteJSON(w, http.StatusForbidden, map[string]string{"error": "key not allowed"})
+		return
+	}
+	signature, err := key.Sign(rand.Reader, payload, opts)
 	if err != nil {
 		s.auth.record(clientID, "sign", false, err.Error(), r.RemoteAddr)
 		WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -98,6 +115,62 @@ func (s *SignServer) sign(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auth.record(clientID, "sign", true, "", r.RemoteAddr)
 	WriteJSON(w, http.StatusOK, SignResponse{Signature: base64.StdEncoding.EncodeToString(signature)})
+}
+
+func loadClientKeys(auth *authManager) (map[string]map[string]crypto.Signer, error) {
+	keys := make(map[string]map[string]crypto.Signer)
+	if auth == nil {
+		return keys, nil
+	}
+	for clientID, state := range auth.clients {
+		if state == nil {
+			continue
+		}
+		for keyID, path := range state.cfg.PrivateKeys {
+			keyID = strings.TrimSpace(keyID)
+			path = strings.TrimSpace(path)
+			if keyID == "" || path == "" {
+				continue
+			}
+			key, err := LoadPrivateKey(path)
+			if err != nil {
+				return nil, err
+			}
+			if keys[clientID] == nil {
+				keys[clientID] = make(map[string]crypto.Signer)
+			}
+			keys[clientID][keyID] = key
+		}
+		if path := strings.TrimSpace(state.cfg.PrivateKey); path != "" {
+			key, err := LoadPrivateKey(path)
+			if err != nil {
+				return nil, err
+			}
+			if keys[clientID] == nil {
+				keys[clientID] = make(map[string]crypto.Signer)
+			}
+			keys[clientID][""] = key
+		}
+	}
+	return keys, nil
+}
+
+func (s *SignServer) keyForRequest(r *http.Request) (crypto.Signer, bool) {
+	clientID := clientIDFromContext(r.Context())
+	keyID := strings.TrimSpace(r.Header.Get(HeaderKeyID))
+	if keys := s.clientKeys[clientID]; keys != nil {
+		if key, ok := keys[keyID]; ok {
+			return key, true
+		}
+		if keyID == "" {
+			return s.key, true
+		}
+		return nil, false
+	}
+	if keyID != "" {
+		return nil, false
+	}
+	return s.key, true
 }
 
 func validatePayload(payload []byte, opts crypto.SignerOpts) error {

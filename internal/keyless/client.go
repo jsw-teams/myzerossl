@@ -16,12 +16,17 @@ import (
 type RemoteSigner struct {
 	baseURL   string
 	token     string
+	keyID     string
 	client    *http.Client
 	publicKey crypto.PublicKey
 	clientID  string
 }
 
 func NewRemoteSigner(ctx context.Context, baseURL string, token string, client *http.Client) (*RemoteSigner, error) {
+	return NewRemoteSignerForKey(ctx, baseURL, token, "", client)
+}
+
+func NewRemoteSignerForKey(ctx context.Context, baseURL string, token string, keyID string, client *http.Client) (*RemoteSigner, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -35,6 +40,7 @@ func NewRemoteSigner(ctx context.Context, baseURL string, token string, client *
 	signer := &RemoteSigner{
 		baseURL: stringsTrimRightSlash(parsed.String()),
 		token:   token,
+		keyID:   keyID,
 		client:  client,
 	}
 	pub, err := signer.fetchPublicKey(ctx)
@@ -68,6 +74,9 @@ func (s *RemoteSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) 
 	if s.token != "" {
 		req.Header.Set(HeaderToken, s.token)
 	}
+	if s.keyID != "" {
+		req.Header.Set(HeaderKeyID, s.keyID)
+	}
 	if s.clientID != "" {
 		req.Header.Set(HeaderClientID, s.clientID)
 	}
@@ -96,6 +105,9 @@ func (s *RemoteSigner) fetchPublicKey(ctx context.Context) (crypto.PublicKey, er
 	}
 	if s.token != "" {
 		req.Header.Set(HeaderToken, s.token)
+	}
+	if s.keyID != "" {
+		req.Header.Set(HeaderKeyID, s.keyID)
 	}
 	if s.clientID != "" {
 		req.Header.Set(HeaderClientID, s.clientID)

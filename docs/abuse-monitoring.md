@@ -28,6 +28,10 @@ install -d -m 0750 /etc/myzerossl /var/log/myzerossl
     {
       "id": "tw-edge",
       "token": "replace-with-a-long-random-token-for-tw",
+      "private_key": "/etc/openresty/ssl/alternate.example.net.key.pem",
+      "private_keys": {
+        "alt": "/etc/openresty/ssl/alternate.example.net.key.pem"
+      },
       "rate_per_minute": 20000,
       "auto_disable_signs_per_minute": 0,
       "auto_disable_errors_per_minute": 0,
@@ -44,6 +48,12 @@ install -d -m 0750 /etc/myzerossl /var/log/myzerossl
   ]
 }
 ```
+
+`private_key` and `private_keys` are optional. When both are omitted,
+`keylessd` uses the default `KEYLESS_PRIVATE_KEY`. `private_key` changes the
+default key for that client token. `private_keys` allows the same client token
+to request named keys, such as `alt`, while keeping all private keys on the
+trusted signer host.
 
 Field behavior:
 
