@@ -1,0 +1,23 @@
+[Unit]
+Description=myzerossl local private key signing service
+After=network.target
+
+[Service]
+Type=simple
+User=myzerossl
+Group=myzerossl
+EnvironmentFile=/etc/myzerossl/keylessd-local.env
+ExecStart=/usr/local/bin/keylessd \
+  -listen ${KEYLESS_LISTEN} \
+  -key ${KEYLESS_PRIVATE_KEY} \
+  -token ${KEYLESS_TOKEN}
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/openresty/ssl /etc/myzerossl
+
+[Install]
+WantedBy=multi-user.target

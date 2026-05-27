@@ -51,7 +51,15 @@ dist/linux-amd64/edgeproxy
 ## Deploy The Trusted Signer
 
 Run this on the trusted server that is allowed to hold the certificate private
-key:
+key. If you already have `gateway.js.gripe` on this trusted host, you can expose
+the signer at:
+
+```text
+https://gateway.js.gripe/api/v1/ssl-signer
+```
+
+In this mode `keylessd` listens on localhost HTTP and OpenResty provides the
+public HTTPS entrypoint.
 
 ```sh
 apt update
@@ -81,12 +89,12 @@ nano /etc/myzerossl/keylessd.env
 Example:
 
 ```sh
-KEYLESS_LISTEN=10.0.0.10:9443
+KEYLESS_LISTEN=127.0.0.1:19443
 KEYLESS_PRIVATE_KEY=/etc/myzerossl/private/example.com.key
-KEYLESS_TLS_CERT=/etc/myzerossl/keyless/server.crt
-KEYLESS_TLS_KEY=/etc/myzerossl/keyless/server.key
-KEYLESS_CLIENT_CA=/etc/myzerossl/keyless/edge-client-ca.crt
-KEYLESS_TOKEN=
+KEYLESS_TLS_CERT=
+KEYLESS_TLS_KEY=
+KEYLESS_CLIENT_CA=
+KEYLESS_TOKEN=replace-with-a-long-random-secret
 ```
 
 Start:
@@ -95,6 +103,17 @@ Start:
 systemctl restart keylessd
 systemctl status keylessd --no-pager -l
 ```
+
+For the `gateway.js.gripe` OpenResty entrypoint, see
+`deploy/openresty/README.md`. The edge nodes should then use:
+
+```sh
+KEYLESS_URL=https://gateway.js.gripe/api/v1/ssl-signer
+KEYLESS_TOKEN=replace-with-the-same-long-random-secret
+```
+
+This repository also includes `deploy/systemd/keylessd-local.service` and
+`deploy/env/keylessd-local.env.example` for this localhost signer mode.
 
 ## Deploy The Taiwan Edge VPS
 
