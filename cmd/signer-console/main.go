@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -112,7 +113,13 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", a.index)
 	mux.HandleFunc("GET /login", a.login)
+	mux.HandleFunc("GET /auth/start", a.authStart)
 	mux.HandleFunc("GET /auth/account/callback", a.callback)
+	mux.HandleFunc("GET /console", a.console)
+	mux.HandleFunc("GET /favicon.png", a.icon)
+	mux.HandleFunc("GET /og.png", a.icon)
+	mux.HandleFunc("GET /llms.txt", a.llms)
+	mux.HandleFunc("GET /robots.txt", a.robots)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("POST /api/register", a.registerEdge)
 	mux.HandleFunc("GET /api/summary", a.requireAdmin(a.summary))
@@ -129,19 +136,35 @@ func main() {
 }
 
 func (a *app) index(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.currentUser(r); ok {
+		http.Redirect(w, r, "/console", http.StatusFound)
+		return
+	}
+	renderTemplate(w, landingPage, nil)
+}
+
+func (a *app) console(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = page.Execute(w, map[string]string{
+	_ = consolePage.Execute(w, map[string]string{
 		"Email": user.User.Email,
 		"Name":  user.User.DisplayName,
 	})
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.currentUser(r); ok {
+		http.Redirect(w, r, "/console", http.StatusFound)
+		return
+	}
+	renderTemplate(w, loginPage, nil)
+}
+
+func (a *app) authStart(w http.ResponseWriter, r *http.Request) {
 	state := randomString(32)
 	setCookie(w, "ssl_signer_state", a.signValue(state), 10*time.Minute)
 
@@ -158,6 +181,44 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	q.Set("prompt", "consent")
 	loginURL.RawQuery = q.Encode()
 	http.Redirect(w, r, loginURL.String(), http.StatusFound)
+}
+
+func (a *app) icon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(bearIcon)
+}
+
+func (a *app) llms(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(`# SSL Signer Console
+
+SSL Signer Console is the administrator interface for myzerossl keyless TLS signing.
+
+Canonical URL: https://ssl-signer.js.gripe
+Repository: https://github.com/jsw-teams/myzerossl
+
+Purpose:
+- Review pending low-trust edge VPS registration requests.
+- Approve a pending edge and generate its one-time signer token.
+- Revoke or restore edge signing clients.
+- Review signer audit logs and automatic abuse revocation state.
+
+Access policy:
+- Human access requires account-system login at https://account.js.gripe.
+- Only users with role system_admin may access the console.
+- Edge VPS nodes must not receive the certificate private key.
+
+Automation:
+- New edge nodes submit POST /api/register with a proposed id and label.
+- Registration stays pending until approved by a system administrator.
+- Signing API traffic uses https://gateway.js.gripe/api/v1/ssl-signer.
+`))
+}
+
+func (a *app) robots(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("User-agent: *\nDisallow: /\nAllow: /llms.txt\n"))
 }
 
 func (a *app) callback(w http.ResponseWriter, r *http.Request) {
@@ -690,7 +751,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -701,34 +762,75 @@ func applyEnv(name string, target *string) {
 	}
 }
 
-var page = template.Must(template.New("page").Parse(`<!doctype html>
+func renderTemplate(w http.ResponseWriter, tmpl *template.Template, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = tmpl.Execute(w, data)
+}
+
+//go:embed black-bear-wrench.png
+var bearIcon []byte
+
+const head = `<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="SSL Signer Console manages keyless TLS signer access for low-trust edge VPS nodes without placing certificate private keys on those nodes.">
+<meta property="og:title" content="SSL Signer Console">
+<meta property="og:description" content="Approve edge registrations, revoke signer clients, and review keyless SSL audit logs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ssl-signer.js.gripe">
+<meta property="og:image" content="https://ssl-signer.js.gripe/og.png">
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+:root{--ink:#12151a;--muted:#5c6572;--line:#1f2937;--paper:#fffdf7;--soft:#f2efe6;--mint:#b8f3d4;--blue:#b8d8ff;--red:#ff7b7b}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#dbeafe 0,#f7f4ea 280px);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;image-rendering:pixelated}
+a{color:inherit}.wrap{max-width:1120px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 0}
+.brand{display:flex;align-items:center;gap:12px}.logo{width:54px;height:54px;border:3px solid var(--line);border-radius:8px;background:#fff;box-shadow:4px 4px 0 var(--line);object-fit:cover}
+.title{font-size:24px;font-weight:900;line-height:1}.muted{color:var(--muted)}.pixel{border:3px solid var(--line);box-shadow:5px 5px 0 var(--line);background:var(--paper);border-radius:6px}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center;padding:26px;margin-top:14px}.hero h1{font-size:34px;line-height:1.08;margin:0 0 12px}
+.hero p{font-size:16px;line-height:1.7}.mascot{width:220px;max-width:100%;display:block;margin:auto;border:3px solid var(--line);border-radius:10px;background:#fff;box-shadow:5px 5px 0 var(--line)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px}.card{padding:16px}.card h2,.card h3{margin:0 0 10px;font-size:18px}.card p{line-height:1.6}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:3px solid var(--line);background:var(--mint);box-shadow:3px 3px 0 var(--line);border-radius:6px;font-weight:900;text-decoration:none;cursor:pointer}
+.btn.secondary{background:var(--blue)}.btn.danger{background:#ffe0e0;color:#8a1111}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+header.app{background:var(--paper);border-bottom:3px solid var(--line)}main.console{display:grid;gap:18px}.panel{padding:16px;overflow:auto}.panel h2{margin:0 0 12px;font-size:18px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:2px solid #e5dfcf;padding:10px;vertical-align:middle}code,pre{background:#ede8da;border:2px solid #d8cfba;border-radius:4px}pre{padding:12px;white-space:pre-wrap;max-height:360px;overflow:auto}
+.empty{padding:14px;background:#ede8da;border:2px dashed #b9ae99;border-radius:6px}.pill{display:inline-block;padding:4px 8px;border:2px solid var(--line);background:#fff;border-radius:999px}
+@media(max-width:760px){.hero{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.hero h1{font-size:28px}.toolbar{align-items:stretch}.btn{justify-content:center}.top{align-items:flex-start}}
+</style>`
+
+var landingPage = template.Must(template.New("landing").Parse(`<!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SSL Signer Console</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f7f8fa;color:#101418}
-    header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #dde1e6;background:#fff}
-    main{max-width:1100px;margin:0 auto;padding:20px;display:grid;gap:18px}
-    section{background:#fff;border:1px solid #dde1e6;border-radius:8px;padding:16px}
-    h1{font-size:20px;margin:0} h2{font-size:16px;margin:0 0 12px}
-    table{width:100%;border-collapse:collapse;font-size:14px} th,td{text-align:left;border-bottom:1px solid #edf0f2;padding:8px}
-    button{border:1px solid #bac2cc;background:#fff;border-radius:6px;padding:6px 10px;cursor:pointer}
-    button.danger{border-color:#c73b3b;color:#a81818} code,pre{background:#f0f2f4;border-radius:6px}
-    pre{padding:12px;overflow:auto;max-height:360px}.muted{color:#5d6875}.actions{display:flex;gap:8px;flex-wrap:wrap}
-  </style>
+  <title>SSL Signer Console - Keyless SSL Edge Control</title>` + head + `
 </head>
 <body>
-  <header>
-    <div><h1>SSL Signer Console</h1><div class="muted">{{.Email}}</div></div>
-    <form method="post" action="/logout"><button>退出</button></form>
-  </header>
-  <main>
-    <section><h2>Pending Edge Registrations</h2><div id="registrations"></div></section>
-    <section><h2>Edge Clients</h2><div id="clients"></div></section>
-    <section><h2>Revoked Clients</h2><pre id="revoked"></pre></section>
-    <section><h2>Signer Audit</h2><pre id="audit"></pre></section>
+  <main class="wrap">
+    <nav class="top"><div class="brand"><img class="logo" src="/favicon.png" alt=""><div><div class="title">SSL Signer</div><div class="muted">Keyless edge control</div></div></div><a class="btn" href="/login">管理员登录</a></nav>
+    <section class="hero pixel">
+      <div><h1>让低信任边缘 VPS 不再持有证书私钥。</h1><p>SSL Signer Console 用 account-system 验证系统管理员，审批 edge 注册、吊销 signer client，并查看 keyless TLS 签名审计日志。</p><div class="toolbar"><a class="btn" href="/login">进入登录页</a><a class="btn secondary" href="/llms.txt">llms.txt</a></div></div>
+      <img class="mascot" src="/favicon.png" alt="黑熊拿着扳手的像素风图标">
+    </section>
+    <section class="grid">
+      <article class="card pixel"><h2>无私钥驻留</h2><p>边缘节点只保存证书链，TLS 握手签名由可信 signer 完成。</p></article>
+      <article class="card pixel"><h2>人工审批</h2><p>新 edge 设备只能提交 pending 申请，管理员批准后才生成 token。</p></article>
+      <article class="card pixel"><h2>自动处置</h2><p>异常签名频率和错误阈值会触发自动吊销，降低滥用窗口。</p></article>
+    </section>
+  </main>
+</body></html>`))
+
+var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
+<html lang="zh-CN"><head><title>登录 - SSL Signer Console</title>` + head + `</head>
+<body><main class="wrap"><nav class="top"><a class="brand" href="/"><img class="logo" src="/favicon.png" alt=""><span class="title">SSL Signer</span></a></nav>
+<section class="hero pixel"><div><h1>系统管理员登录</h1><p>登录将跳转到 account.js.gripe。只有 account-system 的 system_admin 可以访问控制台。</p><a class="btn" href="/auth/start">使用 account-system 登录</a></div><img class="mascot" src="/favicon.png" alt=""></section>
+</main></body></html>`))
+
+var consolePage = template.Must(template.New("console").Parse(`<!doctype html>
+<html lang="zh-CN"><head><title>控制台 - SSL Signer Console</title>` + head + `</head>
+<body>
+  <header class="app"><div class="wrap top"><div class="brand"><img class="logo" src="/favicon.png" alt=""><div><div class="title">SSL Signer Console</div><div class="muted">{{.Email}}</div></div></div><form method="post" action="/logout"><button class="btn secondary">退出</button></form></div></header>
+  <main class="wrap console">
+    <section class="panel pixel"><h2>Pending Edge Registrations</h2><div id="registrations"></div></section>
+    <section class="panel pixel"><h2>Edge Clients</h2><div id="clients"></div></section>
+    <section class="panel pixel"><h2>Revoked Clients</h2><pre id="revoked"></pre></section>
+    <section class="panel pixel"><h2>Signer Audit</h2><pre id="audit"></pre></section>
   </main>
 <script>
 async function api(path, options = {}) {
@@ -758,7 +860,7 @@ async function load() {
       "<button class=\"danger\" onclick=\"registrationAction('" + id + "','reject')\">拒绝</button>" +
       "</td></tr>";
   }).join("");
-  document.querySelector("#registrations").innerHTML = "<table><thead><tr><th>ID</th><th>Label</th><th>Remote</th><th>Requested</th><th></th></tr></thead><tbody>" + pendingRows + "</tbody></table>";
+  document.querySelector("#registrations").innerHTML = pendingRows ? "<table><thead><tr><th>ID</th><th>Label</th><th>Remote</th><th>Requested</th><th></th></tr></thead><tbody>" + pendingRows + "</tbody></table>" : "<div class=\"empty\">暂无待审批 edge 注册申请</div>";
   const rows = (data.clients || []).map(c => {
     const id = esc(c.id);
     const next = c.disabled ? "enable" : "disable";
@@ -773,7 +875,7 @@ async function load() {
       "<button onclick=\"action('" + id + "','unrevoke')\">允许再次注册</button>" +
       "</td></tr>";
   }).join("");
-  document.querySelector("#clients").innerHTML = "<table><thead><tr><th>ID</th><th>Status</th><th>Rate</th><th>Auto disable</th><th></th></tr></thead><tbody>" + rows + "</tbody></table>";
+  document.querySelector("#clients").innerHTML = rows ? "<table><thead><tr><th>ID</th><th>Status</th><th>Rate</th><th>Auto disable</th><th></th></tr></thead><tbody>" + rows + "</tbody></table>" : "<div class=\"empty\">暂无已批准 edge client</div>";
   document.querySelector("#revoked").textContent = (data.revoked || []).join("\n") || "none";
   document.querySelector("#audit").textContent = (data.audit || []).join("\n") || "no audit entries";
 }

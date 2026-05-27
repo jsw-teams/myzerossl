@@ -42,6 +42,7 @@ type clientState struct {
 type authManager struct {
 	mu          sync.Mutex
 	sharedToken string
+	clientsMode bool
 	clients     map[string]*clientState
 	revoked     map[string]struct{}
 	revokedPath string
@@ -66,6 +67,7 @@ func newAuthManager(opts SignServerOptions) (*authManager, error) {
 		auditPath:   opts.AuditPath,
 	}
 	if opts.ClientsPath != "" {
+		manager.clientsMode = true
 		if err := manager.loadClients(opts.ClientsPath); err != nil {
 			return nil, err
 		}
@@ -121,7 +123,7 @@ func (a *authManager) authenticate(token string) (string, bool, string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if len(a.clients) == 0 {
+	if !a.clientsMode && len(a.clients) == 0 {
 		if a.sharedToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(a.sharedToken)) == 1 {
 			return "shared", true, ""
 		}

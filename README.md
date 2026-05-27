@@ -28,6 +28,8 @@ firewall rules, private networking, and logs.
 
 - `cmd/keylessd`: private-key signing API. Run this only on a trusted server.
 - `cmd/edgeproxy`: HTTPS reverse proxy. Run this on untrusted edge VPS nodes.
+- `cmd/signer-console`: pixel-style web console protected by account-system
+  system administrator login.
 - `deploy/systemd`: Debian 12 systemd unit templates.
 - `scripts`: build and install helpers for Debian 12.
 - `docs/abuse-monitoring.md`: per-edge client tokens, audit logging, and
@@ -49,6 +51,35 @@ The binaries will be created at:
 ```text
 dist/linux-amd64/keylessd
 dist/linux-amd64/edgeproxy
+dist/linux-amd64/signer-console
+```
+
+## Signer Console
+
+The trusted host can expose a management console at:
+
+```text
+https://ssl-signer.js.gripe
+```
+
+The console includes:
+
+- Public introduction page.
+- account-system login page.
+- system_admin-only dashboard.
+- Pixel-art black bear wrench icon.
+- SEO description and Open Graph metadata.
+- `/llms.txt` for LLM-friendly service context.
+
+New edge devices are not trusted automatically. They submit a pending
+registration request and appear in the console. A system administrator must
+approve the request before a token is generated. A fresh production
+`/etc/myzerossl/clients.json` should contain no active clients:
+
+```json
+{
+  "clients": []
+}
 ```
 
 ## Deploy The Trusted Signer

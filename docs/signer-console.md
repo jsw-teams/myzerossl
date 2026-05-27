@@ -21,6 +21,22 @@ https://gateway.js.gripe/api/v1/myaccount/me
 
 Only account-system users with `role = system_admin` can access the console.
 
+## Frontend
+
+The console has three web views:
+
+- `/`: public introduction page with SEO and Open Graph metadata.
+- `/login`: account-system login entry page.
+- `/console`: system administrator dashboard.
+
+It also serves:
+
+- `/favicon.png`: pixel-art black bear with a wrench.
+- `/og.png`: same mascot image for Open Graph previews.
+- `/llms.txt`: LLM-friendly service summary.
+- `/robots.txt`: disallows indexing of the private console and allows
+  `/llms.txt`.
+
 ## Account Client
 
 Create an account-system API client:
@@ -78,3 +94,13 @@ curl -X POST https://ssl-signer.js.gripe/api/register \
 The request remains pending until a `system_admin` signs in to
 `https://ssl-signer.js.gripe` and approves it. Approval generates a token once;
 copy it immediately into the edge VPS `KEYLESS_TOKEN`.
+
+Production signer hosts should start with:
+
+```json
+{
+  "clients": []
+}
+```
+
+There are no default active edge clients.
