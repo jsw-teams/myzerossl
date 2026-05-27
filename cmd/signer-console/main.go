@@ -54,21 +54,25 @@ type registrationFile struct {
 }
 
 type edgeRegistration struct {
-	ID              string `json:"id"`
-	Label           string `json:"label,omitempty"`
-	Status          string `json:"status"`
-	RemoteAddr      string `json:"remote_addr,omitempty"`
-	RequestedAt     string `json:"requested_at"`
-	ApprovedAt      string `json:"approved_at,omitempty"`
-	RejectedAt      string `json:"rejected_at,omitempty"`
-	InstallToken    string `json:"install_token,omitempty"`
-	InstallIssuedAt string `json:"install_issued_at,omitempty"`
-	InstallUsedAt   string `json:"install_used_at,omitempty"`
+	ID                string `json:"id"`
+	Label             string `json:"label,omitempty"`
+	Status            string `json:"status"`
+	RemoteAddr        string `json:"remote_addr,omitempty"`
+	RequestedAt       string `json:"requested_at"`
+	ApprovedAt        string `json:"approved_at,omitempty"`
+	RejectedAt        string `json:"rejected_at,omitempty"`
+	InstallToken      string `json:"install_token,omitempty"`
+	InstallIssuedAt   string `json:"install_issued_at,omitempty"`
+	InstallUsedAt     string `json:"install_used_at,omitempty"`
+	InstallVerifiedAt string `json:"install_verified_at,omitempty"`
+	InstallStatus     string `json:"install_status,omitempty"`
+	InstallError      string `json:"install_error,omitempty"`
 }
 
 type registerRequest struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	InstallToken string `json:"install_token,omitempty"`
 }
 
 type clientLimitsRequest struct {
@@ -132,6 +136,7 @@ func main() {
 	mux.HandleFunc("GET /robots.txt", a.robots)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("POST /api/register", a.registerEdge)
+	mux.HandleFunc("POST /api/install/", a.verifyInstall)
 	mux.HandleFunc("GET /api/install/", a.installEdge)
 	mux.HandleFunc("GET /api/summary", a.requireAdmin(a.summary))
 	mux.HandleFunc("POST /api/clients/", a.requireAdmin(a.clientAction))
@@ -309,8 +314,16 @@ func (a *app) registerEdge(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ID = strings.TrimSpace(req.ID)
 	req.Label = strings.TrimSpace(req.Label)
+	req.InstallToken = strings.TrimSpace(req.InstallToken)
 	if !validClientID(req.ID) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	if req.InstallToken == "" {
+		req.InstallToken = randomString(48)
+	}
+	if !validInstallToken(req.InstallToken) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid install token"})
 		return
 	}
 
@@ -339,6 +352,8 @@ func (a *app) registerEdge(w http.ResponseWriter, r *http.Request) {
 			file.Registrations[i].Label = req.Label
 			file.Registrations[i].RemoteAddr = clientAddress(r)
 			file.Registrations[i].RequestedAt = now
+			file.Registrations[i].InstallToken = req.InstallToken
+			file.Registrations[i].InstallIssuedAt = now
 			if err := writeRegistrations(a.registerPath, file); err != nil {
 				writeError(w, err)
 				return
@@ -348,11 +363,13 @@ func (a *app) registerEdge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	file.Registrations = append(file.Registrations, edgeRegistration{
-		ID:          req.ID,
-		Label:       req.Label,
-		Status:      "pending",
-		RemoteAddr:  clientAddress(r),
-		RequestedAt: now,
+		ID:              req.ID,
+		Label:           req.Label,
+		Status:          "pending",
+		RemoteAddr:      clientAddress(r),
+		RequestedAt:     now,
+		InstallToken:    req.InstallToken,
+		InstallIssuedAt: now,
 	})
 	if err := writeRegistrations(a.registerPath, file); err != nil {
 		writeError(w, err)
@@ -485,9 +502,13 @@ func (a *app) registrationAction(w http.ResponseWriter, r *http.Request) {
 		})
 		registrations.Registrations[index].Status = "approved"
 		registrations.Registrations[index].ApprovedAt = now
-		registrations.Registrations[index].InstallToken = randomString(48)
-		registrations.Registrations[index].InstallIssuedAt = now
+		if registrations.Registrations[index].InstallToken == "" {
+			registrations.Registrations[index].InstallToken = randomString(48)
+			registrations.Registrations[index].InstallIssuedAt = now
+		}
 		registrations.Registrations[index].InstallUsedAt = ""
+		registrations.Registrations[index].InstallStatus = "approved"
+		registrations.Registrations[index].InstallError = ""
 		if err := writeClientFile(a.clientsPath, clients); err != nil {
 			writeError(w, err)
 			return
@@ -498,9 +519,9 @@ func (a *app) registrationAction(w http.ResponseWriter, r *http.Request) {
 		}
 		installURL := a.publicURL + "/api/install/" + registrations.Registrations[index].InstallToken
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":              true,
-			"install_url":     installURL,
-			"install_command": "curl -fsSL " + shellQuote(installURL) + " | sh",
+			"ok":          true,
+			"install_url": installURL,
+			"message":     "approved; edge will fetch signer token over HTTPS",
 		})
 	case "reject":
 		registrations.Registrations[index].Status = "rejected"
@@ -566,7 +587,22 @@ func (a *app) installEdge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if wantsJSON(r) {
+		registrations.Registrations[regIndex].InstallStatus = "delivered"
+		if err := writeRegistrations(a.registerPath, registrations); err != nil {
+			http.Error(w, "registration file unavailable", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":            true,
+			"client_id":     reg.ID,
+			"keyless_token": keylessToken,
+		})
+		return
+	}
+
 	registrations.Registrations[regIndex].InstallUsedAt = time.Now().UTC().Format(time.RFC3339)
+	registrations.Registrations[regIndex].InstallStatus = "delivered"
 	if err := writeRegistrations(a.registerPath, registrations); err != nil {
 		http.Error(w, "registration file unavailable", http.StatusInternalServerError)
 		return
@@ -597,6 +633,44 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 echo "memecdn edge token installed for %s"
 `, shellQuote(keylessToken), reg.ID)
+}
+
+func (a *app) verifyInstall(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasSuffix(r.URL.Path, "/verified") {
+		http.NotFound(w, r)
+		return
+	}
+	installToken := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/install/"), "/verified")
+	if installToken == "" || strings.Contains(installToken, "/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	registrations, err := readRegistrations(a.registerPath)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	for i := range registrations.Registrations {
+		reg := registrations.Registrations[i]
+		if reg.InstallToken == installToken && reg.Status == "approved" {
+			now := time.Now().UTC().Format(time.RFC3339)
+			registrations.Registrations[i].InstallUsedAt = now
+			registrations.Registrations[i].InstallVerifiedAt = now
+			registrations.Registrations[i].InstallStatus = "verified"
+			registrations.Registrations[i].InstallError = ""
+			if err := writeRegistrations(a.registerPath, registrations); err != nil {
+				writeError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+			return
+		}
+	}
+	http.NotFound(w, r)
 }
 
 func (a *app) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
@@ -811,12 +885,29 @@ func parseRegistrationAction(path string) (string, string, bool) {
 	return parts[2], parts[3], true
 }
 
+func wantsJSON(r *http.Request) bool {
+	return r.URL.Query().Get("format") == "json" || strings.Contains(r.Header.Get("Accept"), "application/json")
+}
+
 func validClientID(id string) bool {
 	if len(id) < 3 || len(id) > 64 {
 		return false
 	}
 	for _, ch := range id {
 		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validInstallToken(token string) bool {
+	if len(token) < 32 || len(token) > 128 {
+		return false
+	}
+	for _, ch := range token {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
 			continue
 		}
 		return false

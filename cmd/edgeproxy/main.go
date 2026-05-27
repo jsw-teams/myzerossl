@@ -5,8 +5,11 @@ import (
 	"compress/gzip"
 	"container/list"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -17,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +39,12 @@ func main() {
 	caPath := flag.String("ca", "", "CA file for verifying keyless API server")
 	clientCert := flag.String("client-cert", "", "mTLS client certificate for keyless API")
 	clientKey := flag.String("client-key", "", "mTLS client key for keyless API")
+	tokenFile := flag.String("token-file", "", "file for a persisted signer token")
+	registerURL := flag.String("register-url", "", "signer console URL for edge self-enrollment")
+	registerID := flag.String("register-id", "", "edge client id for self-enrollment")
+	registerLabel := flag.String("register-label", "", "edge label for self-enrollment")
+	registerToken := flag.String("register-token", "", "one-time install token for self-enrollment")
+	registerPoll := flag.String("register-poll", "10s", "self-enrollment polling interval")
 	cacheTTL := flag.String("cache-ttl", "10m", "static edge cache TTL, or 0 to disable")
 	cacheMaxBytes := flag.String("cache-max-bytes", "67108864", "maximum in-memory static cache bytes")
 	cacheMaxObjectBytes := flag.String("cache-max-object-bytes", "4194304", "maximum single cached object bytes")
@@ -49,12 +59,39 @@ func main() {
 	applyEnv("KEYLESS_CA", caPath)
 	applyEnv("KEYLESS_CLIENT_CERT", clientCert)
 	applyEnv("KEYLESS_CLIENT_KEY", clientKey)
+	applyEnv("KEYLESS_TOKEN_FILE", tokenFile)
+	applyEnv("EDGE_REGISTER_URL", registerURL)
+	applyEnv("EDGE_REGISTER_ID", registerID)
+	applyEnv("EDGE_REGISTER_LABEL", registerLabel)
+	applyEnv("EDGE_REGISTER_TOKEN", registerToken)
+	applyEnv("EDGE_REGISTER_POLL", registerPoll)
 	applyEnv("EDGE_CACHE_TTL", cacheTTL)
 	applyEnv("EDGE_CACHE_MAX_BYTES", cacheMaxBytes)
 	applyEnv("EDGE_CACHE_MAX_OBJECT_BYTES", cacheMaxObjectBytes)
 
 	if *certPath == "" || *keylessURL == "" {
 		log.Fatal("-cert and -keyless-url are required")
+	}
+	if *token == "" && *tokenFile != "" {
+		loadedToken, err := readTokenFile(*tokenFile)
+		if err != nil {
+			log.Fatalf("read token file: %v", err)
+		}
+		*token = loadedToken
+	}
+	enrolledInstallToken := ""
+	if *token == "" && *registerURL != "" && *registerID != "" {
+		enrolledToken, installToken, err := enrollEdge(context.Background(), *registerURL, *registerID, *registerLabel, *registerToken, mustParseDuration(*registerPoll))
+		if err != nil {
+			log.Fatalf("edge enrollment failed: %v", err)
+		}
+		*token = enrolledToken
+		enrolledInstallToken = installToken
+		if *tokenFile != "" {
+			if err := writeTokenFile(*tokenFile, enrolledToken); err != nil {
+				log.Fatalf("write token file: %v", err)
+			}
+		}
 	}
 
 	transport, err := keylessTransport(*caPath, *clientCert, *clientKey)
@@ -71,6 +108,11 @@ func main() {
 		log.Fatalf("connect keyless signer: %v", err)
 	}
 	signer.SetClientID(*keylessClientID)
+	if enrolledInstallToken != "" {
+		if err := reportInstallVerified(context.Background(), *registerURL, enrolledInstallToken); err != nil {
+			log.Printf("warning: report edge install verification: %v", err)
+		}
+	}
 
 	cert, err := loadCertificateChain(*certPath)
 	if err != nil {
@@ -202,6 +244,137 @@ func splitListens(value string) []string {
 		return []string{":443"}
 	}
 	return listens
+}
+
+type registerRequest struct {
+	ID           string `json:"id"`
+	Label        string `json:"label,omitempty"`
+	InstallToken string `json:"install_token,omitempty"`
+}
+
+type installResponse struct {
+	KeylessToken string `json:"keyless_token"`
+}
+
+func enrollEdge(ctx context.Context, consoleURL, id, label, installToken string, pollInterval time.Duration) (string, string, error) {
+	consoleURL = strings.TrimRight(consoleURL, "/")
+	if installToken == "" {
+		installToken = randomToken()
+	}
+	if label == "" {
+		label = id
+	}
+	payload, err := json.Marshal(registerRequest{ID: id, Label: label, InstallToken: installToken})
+	if err != nil {
+		return "", "", err
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, consoleURL+"/api/register", bytes.NewReader(payload))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusConflict {
+		return "", "", errors.New("edge registration failed: " + resp.Status)
+	}
+	if pollInterval <= 0 {
+		pollInterval = 10 * time.Second
+	}
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case <-ticker.C:
+			token, err := fetchInstallToken(ctx, client, consoleURL, installToken)
+			if err == nil && token != "" {
+				return token, installToken, nil
+			}
+			if err != nil && !errors.Is(err, errInstallPending) {
+				return "", "", err
+			}
+			log.Printf("edge registration %s pending approval", id)
+		}
+	}
+}
+
+var errInstallPending = errors.New("install pending")
+
+func fetchInstallToken(ctx context.Context, client *http.Client, consoleURL, installToken string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, consoleURL+"/api/install/"+installToken+"?format=json", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errInstallPending
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", errors.New("install token fetch failed: " + resp.Status)
+	}
+	var install installResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&install); err != nil {
+		return "", err
+	}
+	if install.KeylessToken == "" {
+		return "", errors.New("install response missing keyless token")
+	}
+	return install.KeylessToken, nil
+}
+
+func reportInstallVerified(ctx context.Context, consoleURL, installToken string) error {
+	consoleURL = strings.TrimRight(consoleURL, "/")
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, consoleURL+"/api/install/"+installToken+"/verified", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("install verification report failed: " + resp.Status)
+	}
+	return nil
+}
+
+func readTokenFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func writeTokenFile(path string, token string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(token+"\n"), 0600)
+}
+
+func randomToken() string {
+	var raw [48]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:])
 }
 
 type cacheEntry struct {

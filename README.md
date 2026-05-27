@@ -54,7 +54,34 @@ The binaries will be created at:
 dist/linux-amd64/keylessd
 dist/linux-amd64/edgeproxy
 dist/linux-amd64/signer-console
+dist/linux-amd64/setup-wizard
 ```
+
+## Web Setup Wizard
+
+For first-time deployment on Debian 12, run the local-only web wizard as root:
+
+```sh
+./dist/linux-amd64/setup-wizard -listen 127.0.0.1:19500 -repo /opt/myzerossl
+```
+
+Then open it through an SSH tunnel from your workstation:
+
+```sh
+ssh -L 19500:127.0.0.1:19500 root@your-server
+```
+
+Visit `http://127.0.0.1:19500`, choose either:
+
+- `edge 设备`: fill the trusted center console URL and signer verification URL.
+  The wizard writes `edgeproxy.env`, installs the service, and configures
+  zero-SSH self-enrollment.
+- `高信任中心`: fill the private key path, console public URL, account-system
+  settings, and public signer URL. The wizard deploys `keylessd-local` and
+  `signer-console`, then prints the values edge devices should use.
+
+The wizard refuses non-local listen addresses because it can write `/etc`,
+install systemd units, and restart services.
 
 ## Edge CDN Behavior
 
@@ -121,19 +148,18 @@ The console includes:
 - Browser-language aware Simplified Chinese, Traditional Chinese, and English
   copy.
 - Responsive layouts for desktop, tablet, and mobile viewports.
-- A single-background pixel UI with a sticky footer and one-time edge install
-  command dialog.
+- A single-background pixel UI with a sticky footer and approval workflow for
+  edge self-enrollment.
 - SEO description and Open Graph metadata.
 - `/llms.txt` for LLM-friendly service context.
 
 New edge devices are not trusted automatically. They submit a pending
 registration request and appear in the console. A system administrator must
-approve the request before a signer client is generated. Approval shows a
-one-time install command, not the real signer token. Run the command as root on
-the matching edge VPS; it fetches the token through a one-time link, writes
-`KEYLESS_TOKEN` into `/etc/myzerossl/edgeproxy.env`, and restarts `edgeproxy`.
-The install command is cleared from the page when the dialog closes. A fresh production
-`/etc/myzerossl/clients.json` should contain no active clients:
+approve the request before a signer client is generated. In the normal zero-SSH
+flow, `edgeproxy` submits the request itself over HTTPS, polls for approval,
+fetches its signer token through a one-time JSON endpoint, writes the token to a
+local token file, and verifies it by connecting to the trusted signer. A fresh
+production `/etc/myzerossl/clients.json` should contain no active clients:
 
 ```json
 {
@@ -249,9 +275,15 @@ Example:
 EDGE_LISTEN=:443
 EDGE_BACKEND=http://127.0.0.1:8080
 EDGE_CERT=/etc/myzerossl/certs/example.com.fullchain.crt
+KEYLESS_TOKEN_FILE=/var/lib/memecdn/keyless.token
 EDGE_CACHE_TTL=10m
 EDGE_CACHE_MAX_BYTES=67108864
 EDGE_CACHE_MAX_OBJECT_BYTES=4194304
+EDGE_REGISTER_URL=https://ssl-signer.js.gripe
+EDGE_REGISTER_ID=tw-edge
+EDGE_REGISTER_LABEL=Taiwan edge
+EDGE_REGISTER_TOKEN=
+EDGE_REGISTER_POLL=10s
 KEYLESS_URL=https://10.0.0.10:9443
 KEYLESS_CLIENT_ID=tw-edge
 KEYLESS_CA=/etc/myzerossl/keyless/ca.crt
@@ -259,6 +291,14 @@ KEYLESS_CLIENT_CERT=/etc/myzerossl/keyless/edge-client.crt
 KEYLESS_CLIENT_KEY=/etc/myzerossl/keyless/edge-client.key
 KEYLESS_TOKEN=
 ```
+
+When `KEYLESS_TOKEN` and `KEYLESS_TOKEN_FILE` are empty, `edgeproxy` registers
+itself with the signer console using `EDGE_REGISTER_*`. After approval, it
+fetches the signer token, writes it to `KEYLESS_TOKEN_FILE`, then connects to
+`KEYLESS_URL`; that connection validates the token before the public HTTPS
+listener starts. Once validation succeeds, the edge reports the install as
+verified to the console. No SSH from the console to the edge is part of the
+product flow.
 
 Start:
 
