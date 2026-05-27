@@ -28,16 +28,18 @@ install -d -m 0750 /etc/myzerossl /var/log/myzerossl
     {
       "id": "tw-edge",
       "token": "replace-with-a-long-random-token-for-tw",
-      "rate_per_minute": 300,
-      "auto_disable_signs_per_minute": 1000,
-      "auto_disable_errors_per_minute": 30
+      "rate_per_minute": 20000,
+      "auto_disable_signs_per_minute": 0,
+      "auto_disable_errors_per_minute": 0,
+      "auto_revoke": false
     },
     {
       "id": "hk-edge",
       "token": "replace-with-a-long-random-token-for-hk",
-      "rate_per_minute": 300,
-      "auto_disable_signs_per_minute": 1000,
-      "auto_disable_errors_per_minute": 30
+      "rate_per_minute": 20000,
+      "auto_disable_signs_per_minute": 0,
+      "auto_disable_errors_per_minute": 0,
+      "auto_revoke": false
     }
   ]
 }
@@ -47,10 +49,13 @@ Field behavior:
 
 - `rate_per_minute`: soft limit. Further signing requests are rejected until
   the next minute window.
-- `auto_disable_signs_per_minute`: hard abuse threshold. If exceeded, the
-  client id is appended to `revoked-clients.txt`.
-- `auto_disable_errors_per_minute`: hard error threshold. Repeated bad payloads
-  also revoke the client.
+- `auto_disable_signs_per_minute`: optional hard per-minute threshold. If set,
+  requests over the threshold are denied for the current window.
+- `auto_disable_errors_per_minute`: optional hard error threshold. If set,
+  requests over the threshold are denied for the current window.
+- `auto_revoke`: when `true`, the auto-disable thresholds also append the
+  client id to `revoked-clients.txt`. Leave this `false` for Cloudflare-facing
+  edge nodes so a probe burst cannot permanently disable a healthy region.
 - `disabled`: optional manual kill switch in `clients.json`.
 
 ## Edge Files
@@ -67,14 +72,16 @@ and maps the token to the configured client id.
 
 ## Automatic Revocation
 
-When a threshold is exceeded, `keylessd` appends the client id to:
+Manual revocation appends the client id to:
 
 ```text
 /etc/myzerossl/revoked-clients.txt
 ```
 
-The client is denied immediately in memory and remains denied after restart
-because the revoked file is loaded at startup.
+The client is denied immediately after restart because the revoked file is
+loaded at startup. Automatic permanent revocation is disabled by default; enable
+`auto_revoke` only for tightly controlled clients where a false positive is less
+harmful than leaving the token active.
 
 To manually revoke an edge:
 

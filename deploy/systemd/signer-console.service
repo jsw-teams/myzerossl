@@ -1,5 +1,5 @@
 [Unit]
-Description=myzerossl signer admin console
+Description=memecdn signer admin console
 After=network.target
 
 [Service]

@@ -1,5 +1,5 @@
 [Unit]
-Description=myzerossl local private key signing service
+Description=memecdn local private key signing service
 After=network.target
 
 [Service]

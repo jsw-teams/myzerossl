@@ -1,3 +1,3 @@
-module myzerossl
+module memecdn
 
 go 1.25

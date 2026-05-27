@@ -1,5 +1,5 @@
 [Unit]
-Description=myzerossl private key signing service
+Description=memecdn private key signing service
 After=network-online.target
 Wants=network-online.target
 

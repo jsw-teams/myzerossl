@@ -1,5 +1,5 @@
 [Unit]
-Description=myzerossl keyless edge proxy
+Description=memecdn low-trust edge CDN proxy
 After=network-online.target
 Wants=network-online.target
 
@@ -8,16 +8,7 @@ Type=simple
 User=myzerossl
 Group=myzerossl
 EnvironmentFile=/etc/myzerossl/edgeproxy.env
-ExecStart=/usr/local/bin/edgeproxy \
-  -listen ${EDGE_LISTEN} \
-  -backend ${EDGE_BACKEND} \
-  -cert ${EDGE_CERT} \
-  -keyless-url ${KEYLESS_URL} \
-  -keyless-client-id ${KEYLESS_CLIENT_ID} \
-  -ca ${KEYLESS_CA} \
-  -client-cert ${KEYLESS_CLIENT_CERT} \
-  -client-key ${KEYLESS_CLIENT_KEY} \
-  -token ${KEYLESS_TOKEN}
+ExecStart=/usr/local/bin/edgeproxy
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

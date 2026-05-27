@@ -1,9 +1,10 @@
-# myzerossl
+# memecdn
 
-`myzerossl` is a Go Keyless SSL edge proxy. Edge VPS nodes keep only the public
-certificate chain. The private key stays on a trusted signing server, and the
-edge asks that server to sign TLS handshake payloads through Go's
-`crypto.Signer`.
+`memecdn` is a low-trust Go edge CDN and Keyless SSL proxy. Edge VPS nodes keep
+only the public certificate chain, cache static objects in memory, and compress
+dynamic text responses for faster regional delivery. The private key stays on a
+trusted signing server, and the edge asks that server to sign TLS handshake
+payloads through Go's `crypto.Signer`.
 
 This is designed for low-trust origin or edge VPS nodes, such as small Hong Kong
 and Taiwan nodes behind Cloudflare Load Balancing.
@@ -14,7 +15,7 @@ and Taiwan nodes behind Cloudflare Load Balancing.
 Visitor
   -> Cloudflare Proxy / Load Balancer
   -> Hong Kong edge VPS or Taiwan edge VPS
-       edgeproxy: public cert chain only, no private key
+       edgeproxy: public cert chain only, static cache, dynamic gzip
   -> trusted keyless signer
        keylessd: owns the certificate private key
   -> backend service
@@ -27,7 +28,8 @@ firewall rules, private networking, and logs.
 ## Components
 
 - `cmd/keylessd`: private-key signing API. Run this only on a trusted server.
-- `cmd/edgeproxy`: HTTPS reverse proxy. Run this on untrusted edge VPS nodes.
+- `cmd/edgeproxy`: low-trust HTTPS edge CDN proxy. Run this on untrusted edge
+  VPS nodes.
 - `cmd/signer-console`: pixel-style web console protected by account-system
   system administrator login.
 - `deploy/systemd`: Debian 12 systemd unit templates.
@@ -41,8 +43,8 @@ firewall rules, private networking, and logs.
 Build on a Linux amd64 host:
 
 ```sh
-git clone https://github.com/jsw-teams/myzerossl.git
-cd myzerossl
+git clone https://github.com/jsw-teams/memecdn.git
+cd memecdn
 ./scripts/build-linux-amd64.sh
 ```
 
@@ -52,6 +54,54 @@ The binaries will be created at:
 dist/linux-amd64/keylessd
 dist/linux-amd64/edgeproxy
 dist/linux-amd64/signer-console
+```
+
+## Edge CDN Behavior
+
+`edgeproxy` keeps the low-trust model: cache contents are disposable, and the
+TLS private key never leaves the trusted signer.
+
+Static cache:
+
+- Caches only `GET` and `HEAD` responses with status `200`.
+- Caches common static extensions such as CSS, JS, images, fonts, WASM, media,
+  JSON, TXT, XML, and source maps.
+- Skips responses with `Cache-Control: private`, `no-store`, or `no-cache`.
+- Skips responses with `Set-Cookie` and requests with `Authorization`.
+- Stores objects in an in-memory LRU cache. A restart drops the cache.
+- Adds `X-Memecdn-Cache: MISS` when filling cache and `X-Memecdn-Cache: HIT`
+  when serving from cache.
+
+Dynamic compression:
+
+- Uses fast gzip for dynamic `text/*`, JSON, JavaScript, and XML responses when
+  the client sends `Accept-Encoding: gzip`.
+- Skips static assets, `HEAD`, upgraded connections, and already-compressed
+  responses.
+- Adds `X-Memecdn-Compression: gzip` when compression is applied.
+
+Edge tuning:
+
+```sh
+EDGE_CACHE_TTL=10m
+EDGE_CACHE_MAX_BYTES=67108864
+EDGE_CACHE_MAX_OBJECT_BYTES=4194304
+```
+
+These defaults are intentionally memory-bounded for 1C1G VPS nodes.
+
+Quick validation after deployment:
+
+```sh
+# First static request should fill cache, second should hit.
+curl -sk https://blog.example.com/assets/site.css -o /dev/null -D - \
+  | grep -i x-memecdn-cache
+curl -sk https://blog.example.com/assets/site.css -o /dev/null -D - \
+  | grep -i x-memecdn-cache
+
+# Dynamic text/HTML/JSON should be gzip-compressed when the client supports it.
+curl -sk -H 'Accept-Encoding: gzip' https://blog.example.com/ -o /dev/null -D - \
+  | grep -Ei 'content-encoding|x-memecdn-compression'
 ```
 
 ## Signer Console
@@ -71,16 +121,18 @@ The console includes:
 - Browser-language aware Simplified Chinese, Traditional Chinese, and English
   copy.
 - Responsive layouts for desktop, tablet, and mobile viewports.
-- A single-background pixel UI with a sticky footer and one-time edge token
-  dialog.
+- A single-background pixel UI with a sticky footer and one-time edge install
+  command dialog.
 - SEO description and Open Graph metadata.
 - `/llms.txt` for LLM-friendly service context.
 
 New edge devices are not trusted automatically. They submit a pending
 registration request and appear in the console. A system administrator must
-approve the request before a token is generated. The generated token is shown
-once in the browser, should be copied into the matching edge VPS immediately,
-and is cleared from the page when the dialog closes. A fresh production
+approve the request before a signer client is generated. Approval shows a
+one-time install command, not the real signer token. Run the command as root on
+the matching edge VPS; it fetches the token through a one-time link, writes
+`KEYLESS_TOKEN` into `/etc/myzerossl/edgeproxy.env`, and restarts `edgeproxy`.
+The install command is cleared from the page when the dialog closes. A fresh production
 `/etc/myzerossl/clients.json` should contain no active clients:
 
 ```json
@@ -106,7 +158,7 @@ public HTTPS entrypoint.
 apt update
 apt install -y ca-certificates
 
-git clone https://github.com/jsw-teams/myzerossl.git /opt/myzerossl
+git clone https://github.com/jsw-teams/memecdn.git /opt/myzerossl
 cd /opt/myzerossl
 ./scripts/build-linux-amd64.sh
 ./scripts/install-keylessd-debian12.sh
@@ -168,7 +220,7 @@ On the Taiwan VPS:
 apt update
 apt install -y ca-certificates git
 
-git clone https://github.com/jsw-teams/myzerossl.git /opt/myzerossl
+git clone https://github.com/jsw-teams/memecdn.git /opt/myzerossl
 cd /opt/myzerossl
 ./scripts/build-linux-amd64.sh
 ./scripts/install-edge-debian12.sh
@@ -197,6 +249,9 @@ Example:
 EDGE_LISTEN=:443
 EDGE_BACKEND=http://127.0.0.1:8080
 EDGE_CERT=/etc/myzerossl/certs/example.com.fullchain.crt
+EDGE_CACHE_TTL=10m
+EDGE_CACHE_MAX_BYTES=67108864
+EDGE_CACHE_MAX_OBJECT_BYTES=4194304
 KEYLESS_URL=https://10.0.0.10:9443
 KEYLESS_CLIENT_ID=tw-edge
 KEYLESS_CA=/etc/myzerossl/keyless/ca.crt

@@ -42,8 +42,8 @@ Frontend behavior:
 - Browser-language aware copy for Simplified Chinese, Traditional Chinese, and
   English.
 - Responsive pixel-style layout for desktop, tablet, and narrow mobile screens.
-- One-time edge token dialog with copy action. The token is removed from the DOM
-  when the dialog is closed.
+- One-time edge install command dialog with copy action. The command is removed
+  from the DOM when the dialog is closed.
 - Single background color and a sticky footer so large desktop viewports do not
   leave the footer floating mid-page.
 - Tables use horizontal scrolling on small screens so long edge IDs, source
@@ -73,7 +73,7 @@ Do not commit the session secret or client secret.
 The console can:
 
 - Review pending edge registration requests.
-- Approve a pending edge and generate its token.
+- Approve a pending edge and generate a one-time install command.
 - Reject a pending edge registration.
 - View configured edge signer clients.
 - View revoked client ids.
@@ -105,10 +105,17 @@ curl -X POST https://ssl-signer.js.gripe/api/register \
 ```
 
 The request remains pending until a `system_admin` signs in to
-`https://ssl-signer.js.gripe` and approves it. Approval generates a token once
-and shows it in a console dialog instead of a browser alert. Copy it immediately
-into the edge VPS `KEYLESS_TOKEN`; closing the dialog clears the token from the
-page.
+`https://ssl-signer.js.gripe` and approves it. Approval generates a signer token
+and a one-time install URL. The console shows only an install command:
+
+```sh
+curl -fsSL 'https://ssl-signer.js.gripe/api/install/...' | sh
+```
+
+Run the command as root on the matching edge VPS. The script writes
+`KEYLESS_TOKEN` into `/etc/myzerossl/edgeproxy.env` and restarts `edgeproxy`.
+The real signer token is not displayed in the console, and the install URL is
+marked used after the script is fetched.
 
 Production signer hosts should start with:
 

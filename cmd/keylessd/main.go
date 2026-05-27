@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"myzerossl/internal/keyless"
+	"memecdn/internal/keyless"
 )
 
 func main() {

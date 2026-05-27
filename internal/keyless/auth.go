@@ -29,6 +29,7 @@ type ClientConfig struct {
 	RatePerMinute              int    `json:"rate_per_minute,omitempty"`
 	AutoDisableSignsPerMinute  int    `json:"auto_disable_signs_per_minute,omitempty"`
 	AutoDisableErrorsPerMinute int    `json:"auto_disable_errors_per_minute,omitempty"`
+	AutoRevoke                 bool   `json:"auto_revoke,omitempty"`
 }
 
 type clientState struct {
@@ -175,16 +176,22 @@ func (a *authManager) record(clientID string, action string, ok bool, reason str
 			ok = false
 		}
 		if limit := state.cfg.AutoDisableSignsPerMinute; limit > 0 && action == "sign" && state.signs > limit {
-			state.autoDisabled = true
-			reason = "auto-disabled: sign threshold exceeded"
+			reason = "auto limit exceeded: sign threshold"
 			ok = false
-			a.appendRevokedLocked(clientID)
+			if state.cfg.AutoRevoke {
+				state.autoDisabled = true
+				reason = "auto-revoked: sign threshold exceeded"
+				a.appendRevokedLocked(clientID)
+			}
 		}
 		if limit := state.cfg.AutoDisableErrorsPerMinute; limit > 0 && state.errors > limit {
-			state.autoDisabled = true
-			reason = "auto-disabled: error threshold exceeded"
+			reason = "auto limit exceeded: error threshold"
 			ok = false
-			a.appendRevokedLocked(clientID)
+			if state.cfg.AutoRevoke {
+				state.autoDisabled = true
+				reason = "auto-revoked: error threshold exceeded"
+				a.appendRevokedLocked(clientID)
+			}
 		}
 	}
 	a.mu.Unlock()
@@ -203,9 +210,12 @@ func (a *authManager) allowed(clientID string, action string) (bool, string) {
 		return false, "rate limit exceeded"
 	}
 	if state.cfg.AutoDisableSignsPerMinute > 0 && action == "sign" && state.signs >= state.cfg.AutoDisableSignsPerMinute {
-		state.autoDisabled = true
-		a.appendRevokedLocked(clientID)
-		return false, "auto-disabled: sign threshold exceeded"
+		if state.cfg.AutoRevoke {
+			state.autoDisabled = true
+			a.appendRevokedLocked(clientID)
+			return false, "auto-revoked: sign threshold exceeded"
+		}
+		return false, "auto limit exceeded: sign threshold"
 	}
 	return true, ""
 }
