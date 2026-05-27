@@ -28,16 +28,17 @@ import (
 )
 
 type app struct {
-	accountAPI   string
-	accountLogin string
-	publicURL    string
-	clientID     string
-	sessionKey   []byte
-	clientsPath  string
-	revokedPath  string
-	auditPath    string
-	registerPath string
-	mu           sync.Mutex
+	accountAPI     string
+	accountLogin   string
+	publicURL      string
+	clientID       string
+	sessionKey     []byte
+	clientsPath    string
+	revokedPath    string
+	auditPath      string
+	registerPath   string
+	edgeKeylessURL string
+	mu             sync.Mutex
 }
 
 type accountMe struct {
@@ -93,6 +94,7 @@ func main() {
 	revokedPath := flag.String("revoked", "/etc/myzerossl/revoked-clients.txt", "revoked client ids path")
 	auditPath := flag.String("audit", "/var/log/myzerossl/signer-audit.jsonl", "audit JSONL path")
 	registerPath := flag.String("registrations", "/etc/myzerossl/edge-registrations.json", "pending edge registration path")
+	edgeKeylessURL := flag.String("edge-keyless-url", "", "default public keyless signer URL returned to enrolling edges")
 	flag.Parse()
 
 	applyEnv("CONSOLE_LISTEN", listen)
@@ -105,6 +107,7 @@ func main() {
 	applyEnv("KEYLESS_REVOKED", revokedPath)
 	applyEnv("KEYLESS_AUDIT", auditPath)
 	applyEnv("CONSOLE_REGISTRATIONS", registerPath)
+	applyEnv("CONSOLE_EDGE_KEYLESS_URL", edgeKeylessURL)
 
 	if *clientID == "" {
 		log.Fatal("-client-id is required")
@@ -113,15 +116,16 @@ func main() {
 		log.Fatal("-session-secret is required")
 	}
 	a := &app{
-		accountAPI:   strings.TrimRight(*accountAPI, "/"),
-		accountLogin: *accountLogin,
-		publicURL:    strings.TrimRight(*publicURL, "/"),
-		clientID:     *clientID,
-		sessionKey:   []byte(*sessionSecret),
-		clientsPath:  *clientsPath,
-		revokedPath:  *revokedPath,
-		auditPath:    *auditPath,
-		registerPath: *registerPath,
+		accountAPI:     strings.TrimRight(*accountAPI, "/"),
+		accountLogin:   *accountLogin,
+		publicURL:      strings.TrimRight(*publicURL, "/"),
+		clientID:       *clientID,
+		sessionKey:     []byte(*sessionSecret),
+		clientsPath:    *clientsPath,
+		revokedPath:    *revokedPath,
+		auditPath:      *auditPath,
+		registerPath:   *registerPath,
+		edgeKeylessURL: strings.TrimRight(*edgeKeylessURL, "/"),
 	}
 
 	mux := http.NewServeMux()
@@ -597,6 +601,7 @@ func (a *app) installEdge(w http.ResponseWriter, r *http.Request) {
 			"ok":            true,
 			"client_id":     reg.ID,
 			"keyless_token": keylessToken,
+			"edge_config":   a.edgeConfig(),
 		})
 		return
 	}
@@ -887,6 +892,14 @@ func parseRegistrationAction(path string) (string, string, bool) {
 
 func wantsJSON(r *http.Request) bool {
 	return r.URL.Query().Get("format") == "json" || strings.Contains(r.Header.Get("Accept"), "application/json")
+}
+
+func (a *app) edgeConfig() map[string]string {
+	config := make(map[string]string)
+	if a.edgeKeylessURL != "" {
+		config["KEYLESS_URL"] = a.edgeKeylessURL
+	}
+	return config
 }
 
 func validClientID(id string) bool {

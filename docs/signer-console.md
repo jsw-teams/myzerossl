@@ -114,7 +114,9 @@ curl -H 'Accept: application/json' \
 ```
 
 `edgeproxy` writes the returned `keyless_token` to its configured
-`KEYLESS_TOKEN_FILE` and immediately connects to the trusted signer. The signer
+`KEYLESS_TOKEN_FILE`. The response can also include central `edge_config`
+values such as `KEYLESS_URL`; the edge uses those only when the local env has no
+explicit value. It then immediately connects to the trusted signer. The signer
 public-key request validates the token before the public HTTPS listener starts.
 After validation succeeds, the edge reports back:
 

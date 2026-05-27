@@ -91,8 +91,10 @@ TLS private key never leaves the trusted signer.
 Static cache:
 
 - Caches only `GET` and `HEAD` responses with status `200`.
-- Caches common static extensions such as CSS, JS, images, fonts, WASM, media,
-  JSON, TXT, XML, and source maps.
+- Caches only when the origin explicitly allows shared caching with
+  `Cache-Control: public`, `s-maxage`, or `max-age`.
+- Uses origin `s-maxage` first, then `max-age`; `EDGE_CACHE_TTL` is only the
+  fallback TTL for explicitly public responses without an age directive.
 - Skips responses with `Cache-Control: private`, `no-store`, or `no-cache`.
 - Skips responses with `Set-Cookie` and requests with `Authorization`.
 - Stores objects in an in-memory LRU cache. A restart drops the cache.
@@ -103,8 +105,7 @@ Dynamic compression:
 
 - Uses fast gzip for dynamic `text/*`, JSON, JavaScript, and XML responses when
   the client sends `Accept-Encoding: gzip`.
-- Skips static assets, `HEAD`, upgraded connections, and already-compressed
-  responses.
+- Skips `HEAD`, upgraded connections, and already-compressed responses.
 - Adds `X-Memecdn-Compression: gzip` when compression is applied.
 
 Edge tuning:
@@ -116,6 +117,15 @@ EDGE_CACHE_MAX_OBJECT_BYTES=4194304
 ```
 
 These defaults are intentionally memory-bounded for 1C1G VPS nodes.
+
+Set cache policy on the trusted origin or local OpenResty/app, not in
+`edgeproxy`. For example:
+
+```nginx
+location /assets/ {
+    add_header Cache-Control "public, max-age=600, s-maxage=600" always;
+}
+```
 
 Quick validation after deployment:
 
@@ -320,6 +330,10 @@ certificate if possible, for example:
 Then set `KEYLESS_CLIENT_CERT` and `KEYLESS_CLIENT_KEY` in
 `/etc/myzerossl/edgeproxy.env` accordingly.
 
+When an edge self-enrolls, the trusted console can return `edge_config` such as
+`KEYLESS_URL`. The edge uses that central value when the local env leaves it
+blank; local env values remain explicit overrides or fallback settings.
+
 ## Cloudflare Load Balancing
 
 Create two origin endpoints in Cloudflare, one for the Taiwan edge VPS and one
@@ -333,7 +347,8 @@ Recommended settings:
 - Health check path: `/healthz` on the backend you expose through `EDGE_BACKEND`.
 - Steering: Random for active-active, or Geo steering if you want Taiwan/Hong
   Kong routing preferences.
-- Cache static assets at Cloudflare to reduce origin bandwidth on 1C1G nodes.
+- Cache static assets at Cloudflare and set origin `Cache-Control` headers for
+  memecdn edge cache hits on 1C1G nodes.
 
 ## Notes For 1C1G / 5G VPS Nodes
 

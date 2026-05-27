@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestStaticCacheSkipsPrivateState(t *testing.T) {
+func TestCacheObeysOriginHeaders(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "https://example.test/app.js", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -18,30 +18,34 @@ func TestStaticCacheSkipsPrivateState(t *testing.T) {
 		Header:     make(http.Header),
 		Request:    req,
 	}
-	if !isCacheableStatic(req, resp) {
-		t.Fatal("plain static response should be cacheable")
+	if isCacheableResponse(req, resp) {
+		t.Fatal("response without cache policy must not be cached")
+	}
+	resp.Header.Set("Cache-Control", "public, max-age=60")
+	if !isCacheableResponse(req, resp) {
+		t.Fatal("origin-cacheable response should be cacheable")
 	}
 
 	req.Header.Set("Authorization", "Bearer secret")
-	if isCacheableStatic(req, resp) {
+	if isCacheableResponse(req, resp) {
 		t.Fatal("authorized request must not be cached")
 	}
 	req.Header.Del("Authorization")
 
 	req.Method = http.MethodHead
-	if isCacheableStatic(req, resp) {
+	if isCacheableResponse(req, resp) {
 		t.Fatal("HEAD response must not fill cache")
 	}
 	req.Method = http.MethodGet
 
 	resp.Header.Set("Set-Cookie", "sid=secret")
-	if isCacheableStatic(req, resp) {
+	if isCacheableResponse(req, resp) {
 		t.Fatal("cookie response must not be cached")
 	}
 	resp.Header.Del("Set-Cookie")
 
 	resp.Header.Set("Cache-Control", "private, max-age=60")
-	if isCacheableStatic(req, resp) {
+	if isCacheableResponse(req, resp) {
 		t.Fatal("private response must not be cached")
 	}
 }
@@ -58,6 +62,7 @@ func TestResponseCacheHit(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader("body")),
 		Request:    req,
 	}
+	resp.Header.Set("Cache-Control", "public, max-age=60")
 	if err := cache.store(req, resp); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +87,8 @@ func TestShouldGzipDynamicJSON(t *testing.T) {
 		t.Fatal("dynamic JSON should be gzip-compressed")
 	}
 
-	req.URL.Path = "/asset.js"
+	resp.Header.Set("Content-Encoding", "br")
 	if shouldGzip(req, resp) {
-		t.Fatal("static asset should not be compressed by dynamic gzip path")
+		t.Fatal("already encoded response should not be gzip-compressed")
 	}
 }

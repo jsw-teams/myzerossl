@@ -171,16 +171,17 @@ func (a *app) installTrusted(r *http.Request) (result, error) {
 		return result{}, err
 	}
 	if err := writeEnv("/etc/myzerossl/signer-console.env", map[string]string{
-		"CONSOLE_LISTEN":         "127.0.0.1:19444",
-		"CONSOLE_ACCOUNT_API":    value(r, "trusted_account_api", "https://gateway.example.com/api/v1/myaccount"),
-		"CONSOLE_ACCOUNT_LOGIN":  value(r, "trusted_account_login", "https://account.example.com/login"),
-		"CONSOLE_PUBLIC_URL":     consoleURL,
-		"CONSOLE_CLIENT_ID":      value(r, "trusted_client_id", ""),
-		"CONSOLE_SESSION_SECRET": value(r, "trusted_session_secret", secret()),
-		"KEYLESS_CLIENTS":        "/etc/myzerossl/clients.json",
-		"KEYLESS_REVOKED":        "/etc/myzerossl/revoked-clients.txt",
-		"KEYLESS_AUDIT":          "/var/log/myzerossl/signer-audit.jsonl",
-		"CONSOLE_REGISTRATIONS":  "/etc/myzerossl/edge-registrations.json",
+		"CONSOLE_LISTEN":           "127.0.0.1:19444",
+		"CONSOLE_ACCOUNT_API":      value(r, "trusted_account_api", "https://gateway.example.com/api/v1/myaccount"),
+		"CONSOLE_ACCOUNT_LOGIN":    value(r, "trusted_account_login", "https://account.example.com/login"),
+		"CONSOLE_PUBLIC_URL":       consoleURL,
+		"CONSOLE_EDGE_KEYLESS_URL": keylessURL,
+		"CONSOLE_CLIENT_ID":        value(r, "trusted_client_id", ""),
+		"CONSOLE_SESSION_SECRET":   value(r, "trusted_session_secret", secret()),
+		"KEYLESS_CLIENTS":          "/etc/myzerossl/clients.json",
+		"KEYLESS_REVOKED":          "/etc/myzerossl/revoked-clients.txt",
+		"KEYLESS_AUDIT":            "/var/log/myzerossl/signer-audit.jsonl",
+		"CONSOLE_REGISTRATIONS":    "/etc/myzerossl/edge-registrations.json",
 	}); err != nil {
 		return result{}, err
 	}

@@ -19,7 +19,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -69,9 +68,6 @@ func main() {
 	applyEnv("EDGE_CACHE_MAX_BYTES", cacheMaxBytes)
 	applyEnv("EDGE_CACHE_MAX_OBJECT_BYTES", cacheMaxObjectBytes)
 
-	if *certPath == "" || *keylessURL == "" {
-		log.Fatal("-cert and -keyless-url are required")
-	}
 	if *token == "" && *tokenFile != "" {
 		loadedToken, err := readTokenFile(*tokenFile)
 		if err != nil {
@@ -80,18 +76,24 @@ func main() {
 		*token = loadedToken
 	}
 	enrolledInstallToken := ""
+	var enrolledConfig map[string]string
 	if *token == "" && *registerURL != "" && *registerID != "" {
-		enrolledToken, installToken, err := enrollEdge(context.Background(), *registerURL, *registerID, *registerLabel, *registerToken, mustParseDuration(*registerPoll))
+		enrolledToken, installToken, config, err := enrollEdge(context.Background(), *registerURL, *registerID, *registerLabel, *registerToken, mustParseDuration(*registerPoll))
 		if err != nil {
 			log.Fatalf("edge enrollment failed: %v", err)
 		}
 		*token = enrolledToken
 		enrolledInstallToken = installToken
+		enrolledConfig = config
 		if *tokenFile != "" {
 			if err := writeTokenFile(*tokenFile, enrolledToken); err != nil {
 				log.Fatalf("write token file: %v", err)
 			}
 		}
+	}
+	applyRemoteDefault("KEYLESS_URL", keylessURL, enrolledConfig)
+	if *certPath == "" || *keylessURL == "" {
+		log.Fatal("-cert and -keyless-url are required")
 	}
 
 	transport, err := keylessTransport(*caPath, *clientCert, *clientKey)
@@ -128,7 +130,7 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(backend)
 	cache := newResponseCache(mustParseBytes(*cacheMaxBytes), mustParseBytes(*cacheMaxObjectBytes), mustParseDuration(*cacheTTL))
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		if cache.enabled() && isCacheableStatic(resp.Request, resp) {
+		if cache.enabled() && isCacheableResponse(resp.Request, resp) {
 			if err := cache.store(resp.Request, resp); err != nil {
 				return err
 			}
@@ -232,6 +234,15 @@ func applyEnv(name string, target *string) {
 	}
 }
 
+func applyRemoteDefault(name string, target *string, config map[string]string) {
+	if *target != "" || config == nil {
+		return
+	}
+	if value := strings.TrimSpace(config[name]); value != "" {
+		*target = value
+	}
+}
+
 func splitListens(value string) []string {
 	var listens []string
 	for _, part := range strings.Split(value, ",") {
@@ -253,10 +264,11 @@ type registerRequest struct {
 }
 
 type installResponse struct {
-	KeylessToken string `json:"keyless_token"`
+	KeylessToken string            `json:"keyless_token"`
+	EdgeConfig   map[string]string `json:"edge_config,omitempty"`
 }
 
-func enrollEdge(ctx context.Context, consoleURL, id, label, installToken string, pollInterval time.Duration) (string, string, error) {
+func enrollEdge(ctx context.Context, consoleURL, id, label, installToken string, pollInterval time.Duration) (string, string, map[string]string, error) {
 	consoleURL = strings.TrimRight(consoleURL, "/")
 	if installToken == "" {
 		installToken = randomToken()
@@ -266,21 +278,21 @@ func enrollEdge(ctx context.Context, consoleURL, id, label, installToken string,
 	}
 	payload, err := json.Marshal(registerRequest{ID: id, Label: label, InstallToken: installToken})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, consoleURL+"/api/register", bytes.NewReader(payload))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusConflict {
-		return "", "", errors.New("edge registration failed: " + resp.Status)
+		return "", "", nil, errors.New("edge registration failed: " + resp.Status)
 	}
 	if pollInterval <= 0 {
 		pollInterval = 10 * time.Second
@@ -290,14 +302,14 @@ func enrollEdge(ctx context.Context, consoleURL, id, label, installToken string,
 	for {
 		select {
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return "", "", nil, ctx.Err()
 		case <-ticker.C:
-			token, err := fetchInstallToken(ctx, client, consoleURL, installToken)
-			if err == nil && token != "" {
-				return token, installToken, nil
+			install, err := fetchInstallToken(ctx, client, consoleURL, installToken)
+			if err == nil && install.KeylessToken != "" {
+				return install.KeylessToken, installToken, install.EdgeConfig, nil
 			}
 			if err != nil && !errors.Is(err, errInstallPending) {
-				return "", "", err
+				return "", "", nil, err
 			}
 			log.Printf("edge registration %s pending approval", id)
 		}
@@ -306,31 +318,31 @@ func enrollEdge(ctx context.Context, consoleURL, id, label, installToken string,
 
 var errInstallPending = errors.New("install pending")
 
-func fetchInstallToken(ctx context.Context, client *http.Client, consoleURL, installToken string) (string, error) {
+func fetchInstallToken(ctx context.Context, client *http.Client, consoleURL, installToken string) (installResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, consoleURL+"/api/install/"+installToken+"?format=json", nil)
 	if err != nil {
-		return "", err
+		return installResponse{}, err
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return installResponse{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "", errInstallPending
+		return installResponse{}, errInstallPending
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", errors.New("install token fetch failed: " + resp.Status)
+		return installResponse{}, errors.New("install token fetch failed: " + resp.Status)
 	}
 	var install installResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&install); err != nil {
-		return "", err
+		return installResponse{}, err
 	}
 	if install.KeylessToken == "" {
-		return "", errors.New("install response missing keyless token")
+		return installResponse{}, errors.New("install response missing keyless token")
 	}
-	return install.KeylessToken, nil
+	return install, nil
 }
 
 func reportInstallVerified(ctx context.Context, consoleURL, installToken string) error {
@@ -412,7 +424,7 @@ func (c *responseCache) enabled() bool {
 }
 
 func (c *responseCache) get(r *http.Request) (*cacheEntry, bool) {
-	if !c.enabled() || (r.Method != http.MethodGet && r.Method != http.MethodHead) || !isStaticPath(r.URL.Path) {
+	if !c.enabled() || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return nil, false
 	}
 	key := cacheKey(r)
@@ -445,13 +457,14 @@ func (c *responseCache) store(r *http.Request, resp *http.Response) error {
 		return err
 	}
 	now := time.Now()
+	ttl := cacheTTLFromResponse(resp, c.ttl)
 	entry := &cacheEntry{
 		key:       cacheKey(r),
 		status:    resp.StatusCode,
 		header:    cloneHeader(resp.Header),
 		body:      append([]byte(nil), body...),
 		storedAt:  now,
-		expiresAt: now.Add(c.ttl),
+		expiresAt: now.Add(ttl),
 		size:      int64(len(body)),
 	}
 	c.mu.Lock()
@@ -506,7 +519,7 @@ func (e *cacheEntry) write(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func isCacheableStatic(r *http.Request, resp *http.Response) bool {
+func isCacheableResponse(r *http.Request, resp *http.Response) bool {
 	if r == nil || resp == nil {
 		return false
 	}
@@ -516,7 +529,7 @@ func isCacheableStatic(r *http.Request, resp *http.Response) bool {
 	if r.Header.Get("Authorization") != "" {
 		return false
 	}
-	if resp.StatusCode != http.StatusOK || !isStaticPath(r.URL.Path) {
+	if resp.StatusCode != http.StatusOK {
 		return false
 	}
 	cacheControl := strings.ToLower(resp.Header.Get("Cache-Control"))
@@ -526,16 +539,35 @@ func isCacheableStatic(r *http.Request, resp *http.Response) bool {
 	if resp.Header.Get("Set-Cookie") != "" || resp.Header.Get("Authorization") != "" {
 		return false
 	}
-	return true
+	return strings.Contains(cacheControl, "public") ||
+		cacheDirectiveSeconds(cacheControl, "s-maxage") > 0 ||
+		cacheDirectiveSeconds(cacheControl, "max-age") > 0
 }
 
-func isStaticPath(value string) bool {
-	switch strings.ToLower(path.Ext(value)) {
-	case ".css", ".js", ".mjs", ".json", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".wasm", ".mp4", ".webm", ".mp3", ".ogg", ".txt", ".xml":
-		return true
-	default:
-		return false
+func cacheTTLFromResponse(resp *http.Response, fallback time.Duration) time.Duration {
+	cacheControl := strings.ToLower(resp.Header.Get("Cache-Control"))
+	if seconds := cacheDirectiveSeconds(cacheControl, "s-maxage"); seconds > 0 {
+		return time.Duration(seconds) * time.Second
 	}
+	if seconds := cacheDirectiveSeconds(cacheControl, "max-age"); seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return fallback
+}
+
+func cacheDirectiveSeconds(cacheControl string, name string) int64 {
+	for _, part := range strings.Split(cacheControl, ",") {
+		part = strings.TrimSpace(part)
+		key, value, ok := strings.Cut(part, "=")
+		if !ok || strings.TrimSpace(key) != name {
+			continue
+		}
+		seconds, err := strconv.ParseInt(strings.Trim(value, `"`), 10, 64)
+		if err == nil && seconds > 0 {
+			return seconds
+		}
+	}
+	return 0
 }
 
 func cacheKey(r *http.Request) string {
@@ -543,7 +575,7 @@ func cacheKey(r *http.Request) string {
 }
 
 func shouldGzip(r *http.Request, resp *http.Response) bool {
-	if r == nil || resp == nil || r.Method == http.MethodHead || isStaticPath(r.URL.Path) {
+	if r == nil || resp == nil || r.Method == http.MethodHead {
 		return false
 	}
 	if !strings.Contains(strings.ToLower(r.Header.Get("Accept-Encoding")), "gzip") {
