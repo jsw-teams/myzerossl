@@ -13,7 +13,7 @@ and Taiwan nodes behind Cloudflare Load Balancing.
 ```text
 Visitor
   -> Cloudflare Proxy / Load Balancer
-  -> HK edge VPS 45.196.218.152 or TW edge VPS 136.0.54.54
+  -> Hong Kong edge VPS or Taiwan edge VPS
        edgeproxy: public cert chain only, no private key
   -> trusted keyless signer
        keylessd: owns the certificate private key
@@ -36,7 +36,7 @@ firewall rules, private networking, and logs.
 Build on a Linux amd64 host:
 
 ```sh
-git clone https://github.com/YOUR_ACCOUNT/myzerossl.git
+git clone https://github.com/jsw-teams/myzerossl.git
 cd myzerossl
 ./scripts/build-linux-amd64.sh
 ```
@@ -57,7 +57,7 @@ key:
 apt update
 apt install -y ca-certificates
 
-git clone https://github.com/YOUR_ACCOUNT/myzerossl.git /opt/myzerossl
+git clone https://github.com/jsw-teams/myzerossl.git /opt/myzerossl
 cd /opt/myzerossl
 ./scripts/build-linux-amd64.sh
 ./scripts/install-keylessd-debian12.sh
@@ -98,19 +98,13 @@ systemctl status keylessd --no-pager -l
 
 ## Deploy The Taiwan Edge VPS
 
-Target:
-
-```text
-136.0.54.54
-```
-
 On the Taiwan VPS:
 
 ```sh
 apt update
 apt install -y ca-certificates git
 
-git clone https://github.com/YOUR_ACCOUNT/myzerossl.git /opt/myzerossl
+git clone https://github.com/jsw-teams/myzerossl.git /opt/myzerossl
 cd /opt/myzerossl
 ./scripts/build-linux-amd64.sh
 ./scripts/install-edge-debian12.sh
@@ -155,12 +149,6 @@ systemctl status edgeproxy --no-pager -l
 
 ## Deploy The Hong Kong Edge VPS
 
-Target:
-
-```text
-45.196.218.152
-```
-
 Repeat the same steps as the Taiwan edge VPS. Use a different mTLS client
 certificate if possible, for example:
 
@@ -174,12 +162,9 @@ Then set `KEYLESS_CLIENT_CERT` and `KEYLESS_CLIENT_KEY` in
 
 ## Cloudflare Load Balancing
 
-Create two origin endpoints:
-
-```text
-TW edge: 136.0.54.54
-HK edge: 45.196.218.152
-```
+Create two origin endpoints in Cloudflare, one for the Taiwan edge VPS and one
+for the Hong Kong edge VPS. Keep the actual origin IPs in Cloudflare and your
+private deployment notes, not in this public README.
 
 Recommended settings:
 
