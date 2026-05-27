@@ -22,11 +22,17 @@ Then include the location file inside the HTTPS `server` block for
 `gateway.js.gripe`:
 
 ```nginx
-include /usr/local/openresty/nginx/conf/conf.d/gateway.ssl-signer.locations.conf;
+include /usr/local/openresty/nginx/conf/includes/gateway.ssl-signer.locations.inc;
 ```
 
-After copying `gateway.ssl-signer.locations.conf` into
-`/usr/local/openresty/nginx/conf/conf.d/`, verify and reload:
+Do not place the location include directly in `conf.d/*.conf`; that directory is
+loaded at the top-level `http` context. Copy it to:
+
+```text
+/usr/local/openresty/nginx/conf/includes/gateway.ssl-signer.locations.inc
+```
+
+Then verify and reload:
 
 ```sh
 /usr/local/openresty/nginx/sbin/nginx -t
@@ -40,3 +46,15 @@ KEYLESS_URL=https://gateway.js.gripe/api/v1/ssl-signer
 ```
 
 Keep `KEYLESS_TOKEN` private. Do not commit it to this repository.
+
+## Admin Console
+
+The optional admin console is exposed through:
+
+```text
+https://ssl-signer.js.gripe
+```
+
+Install `deploy/openresty/ssl-signer-console.conf` into `conf.d/` and run
+`signer-console.service`. The console uses account-system third-party login and
+only allows users with the `system_admin` role.

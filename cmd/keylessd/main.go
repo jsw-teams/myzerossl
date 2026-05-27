@@ -24,6 +24,16 @@ func main() {
 	audit := flag.String("audit", "", "JSONL audit log path")
 	flag.Parse()
 
+	applyEnv("KEYLESS_LISTEN", listen)
+	applyEnv("KEYLESS_PRIVATE_KEY", keyPath)
+	applyEnv("KEYLESS_TLS_CERT", tlsCert)
+	applyEnv("KEYLESS_TLS_KEY", tlsKey)
+	applyEnv("KEYLESS_CLIENT_CA", clientCA)
+	applyEnv("KEYLESS_TOKEN", token)
+	applyEnv("KEYLESS_CLIENTS", clients)
+	applyEnv("KEYLESS_REVOKED", revoked)
+	applyEnv("KEYLESS_AUDIT", audit)
+
 	if *keyPath == "" {
 		log.Fatal("-key is required")
 	}
@@ -67,4 +77,10 @@ func main() {
 	}
 	server.TLSConfig = tlsConfig
 	log.Fatal(server.ListenAndServeTLS(*tlsCert, *tlsKey))
+}
+
+func applyEnv(name string, target *string) {
+	if value := os.Getenv(name); value != "" {
+		*target = value
+	}
 }

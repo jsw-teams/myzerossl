@@ -1,20 +1,19 @@
 [Unit]
-Description=myzerossl local private key signing service
+Description=myzerossl signer admin console
 After=network.target
 
 [Service]
 Type=simple
 User=myzerossl
 Group=myzerossl
-EnvironmentFile=/etc/myzerossl/keylessd-local.env
-ExecStart=/usr/local/bin/keylessd
+EnvironmentFile=/etc/myzerossl/signer-console.env
+ExecStart=/usr/local/bin/signer-console
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadOnlyPaths=/etc/openresty/ssl
 ReadWritePaths=/etc/myzerossl /var/log/myzerossl
 
 [Install]

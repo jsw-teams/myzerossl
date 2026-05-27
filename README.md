@@ -32,6 +32,7 @@ firewall rules, private networking, and logs.
 - `scripts`: build and install helpers for Debian 12.
 - `docs/abuse-monitoring.md`: per-edge client tokens, audit logging, and
   automatic revocation.
+- `docs/signer-console.md`: account-system protected admin console.
 
 ## Build Release Binaries
 

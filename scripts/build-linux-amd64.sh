@@ -8,3 +8,4 @@ export GOCACHE="${GOCACHE:-/tmp/myzerossl-go-build}"
 
 go build -buildvcs=false -trimpath -ldflags="-s -w" -o dist/linux-amd64/keylessd ./cmd/keylessd
 go build -buildvcs=false -trimpath -ldflags="-s -w" -o dist/linux-amd64/edgeproxy ./cmd/edgeproxy
+go build -buildvcs=false -trimpath -ldflags="-s -w" -o dist/linux-amd64/signer-console ./cmd/signer-console
