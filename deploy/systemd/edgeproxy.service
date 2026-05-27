@@ -1,0 +1,32 @@
+[Unit]
+Description=myzerossl keyless edge proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myzerossl
+Group=myzerossl
+EnvironmentFile=/etc/myzerossl/edgeproxy.env
+ExecStart=/usr/local/bin/edgeproxy \
+  -listen ${EDGE_LISTEN} \
+  -backend ${EDGE_BACKEND} \
+  -cert ${EDGE_CERT} \
+  -keyless-url ${KEYLESS_URL} \
+  -ca ${KEYLESS_CA} \
+  -client-cert ${KEYLESS_CLIENT_CERT} \
+  -client-key ${KEYLESS_CLIENT_KEY} \
+  -token ${KEYLESS_TOKEN}
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/myzerossl
+ReadOnlyPaths=/etc/myzerossl
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

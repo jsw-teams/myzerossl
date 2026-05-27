@@ -1,0 +1,19 @@
+# Build outputs
+/edgeproxy
+/keylessd
+/dist/
+
+# Local secrets and runtime config
+/keys/
+*.key
+*.pem
+*.crt
+*.csr
+*.p12
+*.pfx
+*.env
+config.local.*
+
+# OS/editor noise
+.DS_Store
+*.swp

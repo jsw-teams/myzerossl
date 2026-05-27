@@ -1,0 +1,27 @@
+[Unit]
+Description=myzerossl private key signing service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myzerossl
+Group=myzerossl
+EnvironmentFile=/etc/myzerossl/keylessd.env
+ExecStart=/usr/local/bin/keylessd \
+  -listen ${KEYLESS_LISTEN} \
+  -key ${KEYLESS_PRIVATE_KEY} \
+  -tls-cert ${KEYLESS_TLS_CERT} \
+  -tls-key ${KEYLESS_TLS_KEY} \
+  -client-ca ${KEYLESS_CLIENT_CA} \
+  -token ${KEYLESS_TOKEN}
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/myzerossl
+
+[Install]
+WantedBy=multi-user.target
