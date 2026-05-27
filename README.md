@@ -336,17 +336,24 @@ blank; local env values remain explicit overrides or fallback settings.
 
 ## Cloudflare Load Balancing
 
-Create two origin endpoints in Cloudflare, one for the Taiwan edge VPS and one
-for the Hong Kong edge VPS. Keep the actual origin IPs in Cloudflare and your
-private deployment notes, not in this public README.
+Create two origin pools in Cloudflare, named by region. For the first batch:
+
+- `HK`: Hong Kong/APAC optimized edge.
+- `US`: trusted primary origin and global fallback.
+
+Keep the actual origin IPs in Cloudflare and your private deployment notes, not
+in this public README.
 
 Recommended settings:
 
 - Proxy status: proxied.
 - SSL/TLS mode: Full strict.
 - Health check path: `/healthz` on the backend you expose through `EDGE_BACKEND`.
-- Steering: Random for active-active, or Geo steering if you want Taiwan/Hong
-  Kong routing preferences.
+- Steering: Proximity when region-level steering is unavailable. Keep `US` as
+  the fallback pool so APAC can prefer `HK` while other regions and HK failures
+  fall back to `US`.
+- Session affinity: `ip_cookie` for steadier user routing.
+- Adaptive routing: enabled for failover across healthy pools.
 - Cache static assets at Cloudflare and set origin `Cache-Control` headers for
   memecdn edge cache hits on 1C1G nodes.
 
