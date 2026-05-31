@@ -33,6 +33,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
+	socksproxy "golang.org/x/net/proxy"
 )
 
 func main() {
@@ -56,6 +57,7 @@ func main() {
 	cacheMaxBytes := flag.String("cache-max-bytes", "67108864", "maximum in-memory static cache bytes")
 	cacheMaxObjectBytes := flag.String("cache-max-object-bytes", "4194304", "maximum single cached object bytes")
 	pluginRoutesPath := flag.String("plugin-routes", "", "optional local plugin route JSON path")
+	pluginOutboundProxy := flag.String("plugin-outbound-proxy", "", "optional SOCKS outbound proxy for plugin backends, for example socks5h://127.0.0.1:40000")
 	flag.Parse()
 
 	applyEnv("EDGE_LISTEN", listen)
@@ -78,6 +80,7 @@ func main() {
 	applyEnv("EDGE_CACHE_MAX_BYTES", cacheMaxBytes)
 	applyEnv("EDGE_CACHE_MAX_OBJECT_BYTES", cacheMaxObjectBytes)
 	applyEnv("EDGE_PLUGIN_ROUTES", pluginRoutesPath)
+	applyEnv("EDGE_PLUGIN_OUTBOUND_PROXY", pluginOutboundProxy)
 
 	if *token == "" && *tokenFile != "" {
 		loadedToken, err := readTokenFile(*tokenFile)
@@ -128,7 +131,7 @@ func main() {
 		log.Fatalf("parse backend URL: %v", err)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend)
-	pluginRoutes, err := loadPluginRoutes(*pluginRoutesPath)
+	pluginRoutes, err := loadPluginRoutes(*pluginRoutesPath, *pluginOutboundProxy)
 	if err != nil {
 		log.Fatalf("load plugin routes: %v", err)
 	}
@@ -428,31 +431,33 @@ type pluginRouteConfig struct {
 }
 
 type pluginRouteSpec struct {
-	Name         string   `json:"name"`
-	Hosts        []string `json:"hosts,omitempty"`
-	ExactPaths   []string `json:"exact_paths,omitempty"`
-	PathPrefixes []string `json:"path_prefixes,omitempty"`
-	Backend      string   `json:"backend"`
-	HostHeader   string   `json:"host_header,omitempty"`
-	ForwardHost  string   `json:"forward_host_header,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
+	Name          string   `json:"name"`
+	Hosts         []string `json:"hosts,omitempty"`
+	ExactPaths    []string `json:"exact_paths,omitempty"`
+	PathPrefixes  []string `json:"path_prefixes,omitempty"`
+	Backend       string   `json:"backend"`
+	HostHeader    string   `json:"host_header,omitempty"`
+	ForwardHost   string   `json:"forward_host_header,omitempty"`
+	Protocol      string   `json:"protocol,omitempty"`
+	OutboundProxy string   `json:"outbound_proxy,omitempty"`
 }
 
 type pluginRoutes []*pluginRoute
 
 type pluginRoute struct {
-	name         string
-	protocol     string
-	backend      *url.URL
-	hostHeader   string
-	forwardHost  string
-	hosts        map[string]struct{}
-	exactPaths   map[string]struct{}
-	pathPrefixes []string
-	proxy        *httputil.ReverseProxy
+	name          string
+	protocol      string
+	backend       *url.URL
+	hostHeader    string
+	forwardHost   string
+	outboundProxy string
+	hosts         map[string]struct{}
+	exactPaths    map[string]struct{}
+	pathPrefixes  []string
+	proxy         *httputil.ReverseProxy
 }
 
-func loadPluginRoutes(path string) (pluginRoutes, error) {
+func loadPluginRoutes(path, defaultOutboundProxy string) (pluginRoutes, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
@@ -466,7 +471,7 @@ func loadPluginRoutes(path string) (pluginRoutes, error) {
 	}
 	routes := make(pluginRoutes, 0, len(config.Routes))
 	for _, spec := range config.Routes {
-		route, err := newPluginRoute(spec)
+		route, err := newPluginRoute(spec, defaultOutboundProxy)
 		if err != nil {
 			return nil, err
 		}
@@ -478,7 +483,7 @@ func loadPluginRoutes(path string) (pluginRoutes, error) {
 	return routes, nil
 }
 
-func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
+func newPluginRoute(spec pluginRouteSpec, defaultOutboundProxy string) (*pluginRoute, error) {
 	if spec.Backend == "" {
 		return nil, errors.New("plugin route backend is required")
 	}
@@ -496,6 +501,14 @@ func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
 	proxyBackend := *backend
 	if protocol == "h2c" {
 		proxyBackend.Scheme = "http"
+	}
+	outboundProxy := strings.TrimSpace(spec.OutboundProxy)
+	if outboundProxy == "" {
+		outboundProxy = strings.TrimSpace(defaultOutboundProxy)
+	}
+	dialContext, err := pluginDialContext(outboundProxy)
+	if err != nil {
+		return nil, err
 	}
 	proxy := httputil.NewSingleHostReverseProxy(&proxyBackend)
 	proxy.BufferPool = relayProxyBufferPool{}
@@ -518,22 +531,23 @@ func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
 	}
 	switch protocol {
 	case "http", "http1", "ws", "websocket":
-		proxy.Transport = httpPluginTransport()
+		proxy.Transport = httpPluginTransport(dialContext)
 	case "h2c", "grpc-h2c":
-		proxy.Transport = h2cTransport()
+		proxy.Transport = h2cTransport(dialContext)
 	default:
 		return nil, errors.New("unsupported plugin route protocol: " + spec.Protocol)
 	}
 	route := &pluginRoute{
-		name:         spec.Name,
-		protocol:     protocol,
-		backend:      &proxyBackend,
-		hostHeader:   hostHeader,
-		forwardHost:  forwardHost,
-		hosts:        makeHostSet(spec.Hosts),
-		exactPaths:   makePathSet(spec.ExactPaths),
-		pathPrefixes: cleanPathList(spec.PathPrefixes),
-		proxy:        proxy,
+		name:          spec.Name,
+		protocol:      protocol,
+		backend:       &proxyBackend,
+		hostHeader:    hostHeader,
+		forwardHost:   forwardHost,
+		outboundProxy: outboundProxy,
+		hosts:         makeHostSet(spec.Hosts),
+		exactPaths:    makePathSet(spec.ExactPaths),
+		pathPrefixes:  cleanPathList(spec.PathPrefixes),
+		proxy:         proxy,
 	}
 	if len(route.exactPaths) == 0 && len(route.pathPrefixes) == 0 {
 		return nil, errors.New("plugin route requires exact_paths or path_prefixes")
@@ -572,7 +586,14 @@ func (r *pluginRoute) serveWebSocketTunnel(w http.ResponseWriter, req *http.Requ
 	if !ok {
 		return false
 	}
-	backendConn, err := net.DialTimeout("tcp", r.backend.Host, 10*time.Second)
+	dialContext, err := pluginDialContext(r.outboundProxy)
+	if err != nil {
+		http.Error(w, "websocket backend proxy invalid", http.StatusBadGateway)
+		return true
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
+	defer cancel()
+	backendConn, err := dialContext(ctx, "tcp", r.backend.Host)
 	if err != nil {
 		http.Error(w, "websocket backend unavailable", http.StatusBadGateway)
 		return true
@@ -673,14 +694,17 @@ func closeWrite(conn net.Conn) {
 	}
 }
 
-func httpPluginTransport() *http.Transport {
+func httpPluginTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
+	if dialContext == nil {
+		dialContext = dialer.DialContext
+	}
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
+		DialContext:           dialContext,
 		ForceAttemptHTTP2:     false,
 		MaxIdleConns:          2048,
 		MaxIdleConnsPerHost:   2048,
@@ -721,10 +745,13 @@ func (r *pluginRoute) matches(req *http.Request) bool {
 	return false
 }
 
-func h2cTransport() *http2.Transport {
+func h2cTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http2.Transport {
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
+	}
+	if dialContext == nil {
+		dialContext = dialer.DialContext
 	}
 	return &http2.Transport{
 		AllowHTTP:        true,
@@ -732,9 +759,56 @@ func h2cTransport() *http2.Transport {
 		PingTimeout:      10 * time.Second,
 		WriteByteTimeout: 30 * time.Second,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, addr)
+			return dialContext(ctx, network, addr)
 		},
 	}
+}
+
+func pluginDialContext(outboundProxy string) (func(context.Context, string, string) (net.Conn, error), error) {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	if strings.TrimSpace(outboundProxy) == "" {
+		return dialer.DialContext, nil
+	}
+	proxyURL, err := url.Parse(outboundProxy)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL.Scheme == "socks5h" {
+		proxyURL = cloneURL(proxyURL)
+		proxyURL.Scheme = "socks5"
+	}
+	proxyDialer, err := socksproxy.FromURL(proxyURL, socksproxy.Direct)
+	if err != nil {
+		return nil, err
+	}
+	if contextDialer, ok := proxyDialer.(socksproxy.ContextDialer); ok {
+		return contextDialer.DialContext, nil
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		type dialResult struct {
+			conn net.Conn
+			err  error
+		}
+		done := make(chan dialResult, 1)
+		go func() {
+			conn, err := proxyDialer.Dial(network, addr)
+			done <- dialResult{conn: conn, err: err}
+		}()
+		select {
+		case result := <-done:
+			return result.conn, result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil
+}
+
+func cloneURL(in *url.URL) *url.URL {
+	out := *in
+	return &out
 }
 
 var proxyBufferPool = sync.Pool{

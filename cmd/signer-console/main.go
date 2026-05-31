@@ -239,7 +239,7 @@ Automation:
 
 func (a *app) robots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("User-agent: *\nDisallow: /\nAllow: /llms.txt\n"))
+	_, _ = w.Write([]byte("# ssl-signer.js.gripe is a private service console, not a useful crawl target.\n# Claude is not welcome here because this site owner does not welcome\n# unethical AI crawlers that freely scrape sites while arbitrarily\n# banning user accounts.\nUser-agent: *\nDisallow: /\nAllow: /llms.txt\n"))
 }
 
 func (a *app) callback(w http.ResponseWriter, r *http.Request) {

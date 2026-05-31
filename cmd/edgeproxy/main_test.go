@@ -160,7 +160,7 @@ func TestPluginRouteHostHeaderOverride(t *testing.T) {
 		HostHeader:   "files-origin.js.gripe",
 		ForwardHost:  "X-Origin-Host",
 		Protocol:     "http",
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
