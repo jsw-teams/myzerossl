@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"container/list"
@@ -29,6 +30,8 @@ import (
 
 	"memecdn/internal/keyless"
 
+	quic "github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
 )
 
@@ -150,7 +153,7 @@ func main() {
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if route := pluginRoutes.match(r); route != nil {
-			route.proxy.ServeHTTP(w, r)
+			route.ServeHTTP(w, r)
 			return
 		}
 		if cached, ok := cache.get(r); ok {
@@ -161,24 +164,64 @@ func main() {
 	})
 
 	tlsConfig := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: certificates,
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: buildCertificateSelector(certificates),
+		NextProtos:     []string{"h2", "http/1.1"},
 	}
 	listeners := splitListens(*listen)
 	errCh := make(chan error, len(listeners))
+	http3Servers := make([]*http3.Server, 0, len(listeners))
 	for _, addr := range listeners {
+		http3Servers = append(http3Servers, buildHTTP3Server(addr, nil, tlsConfig))
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, server := range http3Servers {
+			_ = server.SetQUICHeaders(w.Header())
+		}
+		mux.ServeHTTP(w, r)
+	})
+	for i, addr := range listeners {
 		server := &http.Server{
 			Addr:              addr,
-			Handler:           mux,
+			Handler:           handler,
 			TLSConfig:         tlsConfig,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
+		quicServer := http3Servers[i]
+		quicServer.Handler = handler
 		go func() {
 			log.Printf("listening on %s", server.Addr)
 			errCh <- server.ListenAndServeTLS("", "")
 		}()
+		go func() {
+			log.Printf("listening on %s/udp http3", quicServer.Addr)
+			if err := quicServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("warning: http3 listen %s: %v", quicServer.Addr, err)
+			}
+		}()
 	}
 	log.Fatal(<-errCh)
+}
+
+func buildHTTP3Server(addr string, handler http.Handler, tlsConfig *tls.Config) *http3.Server {
+	return &http3.Server{
+		Addr:           addr,
+		Handler:        handler,
+		TLSConfig:      http3.ConfigureTLSConfig(tlsConfig),
+		MaxHeaderBytes: 1 << 20,
+		IdleTimeout:    120 * time.Second,
+		QUICConfig: &quic.Config{
+			HandshakeIdleTimeout:           10 * time.Second,
+			MaxIdleTimeout:                 120 * time.Second,
+			KeepAlivePeriod:                30 * time.Second,
+			MaxIncomingStreams:             2048,
+			MaxIncomingUniStreams:          512,
+			InitialStreamReceiveWindow:     1 * 1024 * 1024,
+			MaxStreamReceiveWindow:         6 * 1024 * 1024,
+			InitialConnectionReceiveWindow: 16 * 1024 * 1024,
+			MaxConnectionReceiveWindow:     32 * 1024 * 1024,
+		},
+	}
 }
 
 func keylessTransport(caPath, clientCertPath, clientKeyPath string) (*http.Transport, error) {
@@ -285,6 +328,66 @@ func loadKeylessCertificates(ctx context.Context, specs []certificateSpec, keyle
 	return certificates, nil
 }
 
+func buildCertificateSelector(certificates []tls.Certificate) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	type namedCertificate struct {
+		cert     *tls.Certificate
+		patterns []string
+	}
+	named := make([]namedCertificate, 0, len(certificates))
+	for i := range certificates {
+		cert := &certificates[i]
+		patterns := certificateNamePatterns(cert)
+		named = append(named, namedCertificate{cert: cert, patterns: patterns})
+	}
+	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		serverName := cleanHost(hello.ServerName)
+		if serverName == "" {
+			return nil, fmt.Errorf("missing TLS server name")
+		}
+		for _, candidate := range named {
+			for _, pattern := range candidate.patterns {
+				if certificateNameMatches(pattern, serverName) {
+					return candidate.cert, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("unrecognized TLS server name %q", serverName)
+	}
+}
+
+func certificateNamePatterns(cert *tls.Certificate) []string {
+	if cert == nil || cert.Leaf == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	add := func(value string) {
+		value = cleanHost(value)
+		if value != "" {
+			seen[value] = struct{}{}
+		}
+	}
+	for _, name := range cert.Leaf.DNSNames {
+		add(name)
+	}
+	add(cert.Leaf.Subject.CommonName)
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	return out
+}
+
+func certificateNameMatches(pattern, host string) bool {
+	if pattern == host {
+		return true
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[1:]
+		return strings.HasSuffix(host, suffix) && host != pattern[2:]
+	}
+	return false
+}
+
 type caPEMError struct{}
 
 func (caPEMError) Error() string { return "CA file has no PEM certificates" }
@@ -330,6 +433,8 @@ type pluginRouteSpec struct {
 	ExactPaths   []string `json:"exact_paths,omitempty"`
 	PathPrefixes []string `json:"path_prefixes,omitempty"`
 	Backend      string   `json:"backend"`
+	HostHeader   string   `json:"host_header,omitempty"`
+	ForwardHost  string   `json:"forward_host_header,omitempty"`
 	Protocol     string   `json:"protocol,omitempty"`
 }
 
@@ -337,6 +442,10 @@ type pluginRoutes []*pluginRoute
 
 type pluginRoute struct {
 	name         string
+	protocol     string
+	backend      *url.URL
+	hostHeader   string
+	forwardHost  string
 	hosts        map[string]struct{}
 	exactPaths   map[string]struct{}
 	pathPrefixes []string
@@ -389,8 +498,27 @@ func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
 		proxyBackend.Scheme = "http"
 	}
 	proxy := httputil.NewSingleHostReverseProxy(&proxyBackend)
+	proxy.BufferPool = relayProxyBufferPool{}
+	proxy.FlushInterval = -1
+	hostHeader := strings.TrimSpace(spec.HostHeader)
+	forwardHost := strings.TrimSpace(spec.ForwardHost)
+	if hostHeader != "" || forwardHost != "" {
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalHost := cleanHost(req.Host)
+			originalDirector(req)
+			if hostHeader != "" {
+				req.Host = hostHeader
+				req.Header.Set("Host", hostHeader)
+			}
+			if forwardHost != "" && originalHost != "" {
+				req.Header.Set(forwardHost, originalHost)
+			}
+		}
+	}
 	switch protocol {
 	case "http", "http1", "ws", "websocket":
+		proxy.Transport = httpPluginTransport()
 	case "h2c", "grpc-h2c":
 		proxy.Transport = h2cTransport()
 	default:
@@ -398,6 +526,10 @@ func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
 	}
 	route := &pluginRoute{
 		name:         spec.Name,
+		protocol:     protocol,
+		backend:      &proxyBackend,
+		hostHeader:   hostHeader,
+		forwardHost:  forwardHost,
 		hosts:        makeHostSet(spec.Hosts),
 		exactPaths:   makePathSet(spec.ExactPaths),
 		pathPrefixes: cleanPathList(spec.PathPrefixes),
@@ -407,6 +539,159 @@ func newPluginRoute(spec pluginRouteSpec) (*pluginRoute, error) {
 		return nil, errors.New("plugin route requires exact_paths or path_prefixes")
 	}
 	return route, nil
+}
+
+func (r *pluginRoute) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if isWebSocketProtocol(r.protocol) && isWebSocketUpgrade(req) {
+		if r.serveWebSocketTunnel(w, req) {
+			return
+		}
+	}
+	r.proxy.ServeHTTP(w, req)
+}
+
+func isWebSocketProtocol(protocol string) bool {
+	return protocol == "ws" || protocol == "websocket"
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && headerHasToken(r.Header.Get("Connection"), "upgrade")
+}
+
+func headerHasToken(value, token string) bool {
+	for _, part := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *pluginRoute) serveWebSocketTunnel(w http.ResponseWriter, req *http.Request) bool {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return false
+	}
+	backendConn, err := net.DialTimeout("tcp", r.backend.Host, 10*time.Second)
+	if err != nil {
+		http.Error(w, "websocket backend unavailable", http.StatusBadGateway)
+		return true
+	}
+	if tcp, ok := backendConn.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+	}
+	outreq := req.Clone(req.Context())
+	outreq.URL.Scheme = "http"
+	outreq.URL.Host = r.backend.Host
+	outreq.Host = r.backend.Host
+	outreq.RequestURI = ""
+	if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
+		outreq.Header.Set("X-Forwarded-For", prior+", "+clientIP(req.RemoteAddr))
+	} else {
+		outreq.Header.Set("X-Forwarded-For", clientIP(req.RemoteAddr))
+	}
+	outreq.Header.Set("X-Forwarded-Proto", "https")
+	if err := outreq.Write(backendConn); err != nil {
+		_ = backendConn.Close()
+		http.Error(w, "websocket backend write failed", http.StatusBadGateway)
+		return true
+	}
+	backendReader := bufio.NewReader(backendConn)
+	resp, err := http.ReadResponse(backendReader, outreq)
+	if err != nil {
+		_ = backendConn.Close()
+		http.Error(w, "websocket backend upgrade failed", http.StatusBadGateway)
+		return true
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
+		copyHeader(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.CopyBuffer(w, resp.Body, make([]byte, 32*1024))
+		_ = backendConn.Close()
+		return true
+	}
+	clientConn, clientBuf, err := hijacker.Hijack()
+	if err != nil {
+		_ = backendConn.Close()
+		return true
+	}
+	if clientBuf.Reader.Buffered() > 0 {
+		_, _ = io.CopyN(backendConn, clientBuf, int64(clientBuf.Reader.Buffered()))
+	}
+	if err := resp.Write(clientConn); err != nil {
+		_ = clientConn.Close()
+		_ = backendConn.Close()
+		return true
+	}
+	go tunnelConns(clientConn, backendConn)
+	return true
+}
+
+func clientIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
+}
+
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func tunnelConns(a, b net.Conn) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go tunnelOneWay(&wg, a, b)
+	go tunnelOneWay(&wg, b, a)
+	wg.Wait()
+	_ = a.Close()
+	_ = b.Close()
+}
+
+func tunnelOneWay(wg *sync.WaitGroup, dst, src net.Conn) {
+	defer wg.Done()
+	buf := proxyBufferPool.Get().(*[]byte)
+	_, _ = io.CopyBuffer(dst, src, *buf)
+	proxyBufferPool.Put(buf)
+	closeWrite(dst)
+}
+
+func closeWrite(conn net.Conn) {
+	type closeWriter interface {
+		CloseWrite() error
+	}
+	if cw, ok := conn.(closeWriter); ok {
+		_ = cw.CloseWrite()
+	}
+}
+
+func httpPluginTransport() *http.Transport {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          2048,
+		MaxIdleConnsPerHost:   2048,
+		MaxConnsPerHost:       0,
+		IdleConnTimeout:       120 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 0,
+		ReadBufferSize:        64 * 1024,
+		WriteBufferSize:       64 * 1024,
+	}
 }
 
 func (routes pluginRoutes) match(r *http.Request) *pluginRoute {
@@ -420,11 +705,7 @@ func (routes pluginRoutes) match(r *http.Request) *pluginRoute {
 
 func (r *pluginRoute) matches(req *http.Request) bool {
 	if len(r.hosts) > 0 {
-		host := strings.ToLower(req.Host)
-		if h, _, ok := strings.Cut(host, ":"); ok {
-			host = h
-		}
-		if _, ok := r.hosts[host]; !ok {
+		if !hostSetMatches(r.hosts, cleanHost(req.Host)) {
 			return false
 		}
 	}
@@ -446,11 +727,35 @@ func h2cTransport() *http2.Transport {
 		KeepAlive: 30 * time.Second,
 	}
 	return &http2.Transport{
-		AllowHTTP: true,
+		AllowHTTP:        true,
+		ReadIdleTimeout:  30 * time.Second,
+		PingTimeout:      10 * time.Second,
+		WriteByteTimeout: 30 * time.Second,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 			return dialer.DialContext(ctx, network, addr)
 		},
 	}
+}
+
+var proxyBufferPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 64*1024)
+		return &buf
+	},
+}
+
+type relayProxyBufferPool struct{}
+
+func (relayProxyBufferPool) Get() []byte {
+	return *proxyBufferPool.Get().(*[]byte)
+}
+
+func (relayProxyBufferPool) Put(buf []byte) {
+	if cap(buf) < 64*1024 {
+		return
+	}
+	buf = buf[:64*1024]
+	proxyBufferPool.Put(&buf)
 }
 
 func makeHostSet(values []string) map[string]struct{} {
@@ -462,6 +767,26 @@ func makeHostSet(values []string) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func cleanHost(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if host, _, ok := strings.Cut(value, ":"); ok {
+		value = host
+	}
+	return value
+}
+
+func hostSetMatches(hosts map[string]struct{}, host string) bool {
+	if _, ok := hosts[host]; ok {
+		return true
+	}
+	for pattern := range hosts {
+		if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(host, pattern[1:]) && host != pattern[2:] {
+			return true
+		}
+	}
+	return false
 }
 
 func makePathSet(values []string) map[string]struct{} {
